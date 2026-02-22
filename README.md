@@ -21,6 +21,15 @@ turl claude://2823d1df-720a-4c31-ac55-ae8ba726721f
 turl codex://019c871c-b1f9-7f60-9c4f-87ed09f13592 --raw
 ```
 
+## Install from PyPI
+
+```bash
+pip install xuanwo-turl
+turl codex://019c871c-b1f9-7f60-9c4f-87ed09f13592
+```
+
+PyPI package name is `xuanwo-turl`, and installed CLI command remains `turl`.
+
 ## Environment Variables
 
 - `CODEX_HOME`: official Codex home directory
@@ -49,6 +58,24 @@ Resolution precedence:
 
 - `turl-core`: URI parsing, provider resolvers, reading, rendering
 - `turl-cli`: CLI wrapper around `turl-core`
+
+## PyPI Publishing
+
+This repository includes a tag-driven release workflow:
+
+- Workflow file: `.github/workflows/pypi-publish.yml`
+- Trigger: push a tag like `v0.1.0`
+- Guardrail: tag version must match `turl-cli/Cargo.toml` version
+- Build: platform wheels + sdist (via `maturin`)
+- Publish: trusted publishing via `pypa/gh-action-pypi-publish`
+
+Required one-time PyPI setup (Trusted Publisher):
+
+- Owner: `Xuanwo`
+- Repository: `turl`
+- PyPI project: `xuanwo-turl`
+- Workflow: `.github/workflows/pypi-publish.yml`
+- Environment (recommended): `pypi`
 
 ## Current Scope
 

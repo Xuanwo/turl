@@ -1,0 +1,115 @@
+name: Publish Python Package
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  validate-tag:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure tag version matches Cargo version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          cargo_version="$(sed -n 's/^version = \"\\(.*\\)\"/\\1/p' turl-cli/Cargo.toml | head -n 1)"
+
+          if [[ -z "${cargo_version}" ]]; then
+            echo "Failed to read version from turl-cli/Cargo.toml"
+            exit 1
+          fi
+
+          if [[ "${tag}" != "${cargo_version}" ]]; then
+            echo "Tag version (${tag}) does not match Cargo version (${cargo_version})."
+            exit 1
+          fi
+
+  build-wheels:
+    name: Build wheel for ${{ matrix.platform.target }}
+    runs-on: ${{ matrix.platform.os }}
+    needs: validate-tag
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            manylinux: "2014"
+          - os: macos-13
+            target: x86_64-apple-darwin
+            manylinux: "off"
+          - os: macos-14
+            target: aarch64-apple-darwin
+            manylinux: "off"
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            manylinux: "off"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          target: ${{ matrix.platform.target }}
+          manylinux: ${{ matrix.platform.manylinux }}
+          args: --release --out dist --compatibility pypi
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.platform.target }}
+          path: dist
+          if-no-files-found: error
+
+  build-sdist:
+    name: Build source distribution
+    runs-on: ubuntu-latest
+    needs: validate-tag
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+
+      - name: Upload sdist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist
+          if-no-files-found: error
+
+  publish-pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs:
+      - build-wheels
+      - build-sdist
+    environment:
+      name: pypi
+      url: https://pypi.org/p/xuanwo-turl
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download all distributions
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: "*"
+          merge-multiple: true
+
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
