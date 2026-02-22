@@ -7,6 +7,15 @@ description: Use the turl CLI to resolve a Codex or Claude thread URI and print 
 
 Use this skill when you need to read a thread file by URI.
 
+## Installation
+
+Install `turl` from package `xuanwo-turl` via `uv`:
+
+```bash
+uv tool install xuanwo-turl
+turl --version
+```
+
 ## When to Use
 
 - The user gives a `codex://...` or `claude://...` URI.
