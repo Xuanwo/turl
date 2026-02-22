@@ -30,6 +30,16 @@ turl codex://019c871c-b1f9-7f60-9c4f-87ed09f13592
 
 PyPI package name is `xuanwo-turl`, and installed CLI command remains `turl`.
 
+## Install Codex Skill
+
+This repository also includes a Codex skill at `skills/turl` for agents that need to view thread content with `turl`.
+
+```bash
+python3 "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-installer/scripts/install-skill-from-github.py" \
+  --repo Xuanwo/turl \
+  --path skills/turl
+```
+
 ## Environment Variables
 
 - `CODEX_HOME`: official Codex home directory
