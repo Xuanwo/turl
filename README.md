@@ -6,6 +6,7 @@
 
 - Supports URI input:
   - `codex://<session_id>`
+  - `codex://threads/<session_id>`
   - `claude://<session_id>`
 - Resolves thread files from local storage roots.
 - Default output is markdown:
@@ -17,6 +18,7 @@
 
 ```bash
 turl codex://019c871c-b1f9-7f60-9c4f-87ed09f13592
+turl codex://threads/019c871c-b1f9-7f60-9c4f-87ed09f13592
 turl claude://2823d1df-720a-4c31-ac55-ae8ba726721f
 turl codex://019c871c-b1f9-7f60-9c4f-87ed09f13592 --raw
 ```
@@ -45,7 +47,10 @@ Resolution precedence:
 
 ## URI Rules
 
-- URI format must be `<scheme>://<session_id>`
+- URI format:
+  - `codex://<session_id>`
+  - `codex://threads/<session_id>`
+  - `claude://<session_id>`
 - Supported schemes: `codex`, `claude`
 - Only session IDs are accepted (UUID-like format)
 

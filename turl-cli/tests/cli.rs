@@ -4,11 +4,13 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 use tempfile::tempdir;
 
-fn setup_codex_tree() -> (tempfile::TempDir, String) {
+const SESSION_ID: &str = "019c871c-b1f9-7f60-9c4f-87ed09f13592";
+
+fn setup_codex_tree() -> tempfile::TempDir {
     let temp = tempdir().expect("tempdir");
-    let thread_path = temp
-        .path()
-        .join("sessions/2026/02/23/rollout-2026-02-23T04-48-50-019c871c-b1f9-7f60-9c4f-87ed09f13592.jsonl");
+    let thread_path = temp.path().join(format!(
+        "sessions/2026/02/23/rollout-2026-02-23T04-48-50-{SESSION_ID}.jsonl"
+    ));
     fs::create_dir_all(thread_path.parent().expect("parent")).expect("mkdir");
     fs::write(
         &thread_path,
@@ -16,20 +18,25 @@ fn setup_codex_tree() -> (tempfile::TempDir, String) {
     )
     .expect("write");
 
-    (
-        temp,
-        "codex://019c871c-b1f9-7f60-9c4f-87ed09f13592".to_string(),
-    )
+    temp
+}
+
+fn codex_uri() -> String {
+    format!("codex://{SESSION_ID}")
+}
+
+fn codex_deeplink_uri() -> String {
+    format!("codex://threads/{SESSION_ID}")
 }
 
 #[test]
 fn default_outputs_markdown() {
-    let (temp, uri) = setup_codex_tree();
+    let temp = setup_codex_tree();
 
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("turl"));
     cmd.env("CODEX_HOME", temp.path())
         .env("CLAUDE_CONFIG_DIR", temp.path().join("missing-claude"))
-        .arg(uri)
+        .arg(codex_uri())
         .assert()
         .success()
         .stdout(predicate::str::contains("# Thread"))
@@ -39,16 +46,31 @@ fn default_outputs_markdown() {
 
 #[test]
 fn raw_outputs_json() {
-    let (temp, uri) = setup_codex_tree();
+    let temp = setup_codex_tree();
 
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("turl"));
     cmd.env("CODEX_HOME", temp.path())
         .env("CLAUDE_CONFIG_DIR", temp.path().join("missing-claude"))
-        .arg(uri)
+        .arg(codex_uri())
         .arg("--raw")
         .assert()
         .success()
         .stdout(predicate::str::contains("\"response_item\""));
+}
+
+#[test]
+fn codex_deeplink_outputs_markdown() {
+    let temp = setup_codex_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("turl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .env("CLAUDE_CONFIG_DIR", temp.path().join("missing-claude"))
+        .arg(codex_deeplink_uri())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Thread"))
+        .stdout(predicate::str::contains("## 1. User"))
+        .stdout(predicate::str::contains("hello"));
 }
 
 #[test]
@@ -58,7 +80,7 @@ fn missing_thread_returns_non_zero() {
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("turl"));
     cmd.env("CODEX_HOME", temp.path())
         .env("CLAUDE_CONFIG_DIR", temp.path())
-        .arg("codex://019c871c-b1f9-7f60-9c4f-87ed09f13592")
+        .arg(codex_uri())
         .assert()
         .failure()
         .stderr(predicate::str::contains("thread not found"));

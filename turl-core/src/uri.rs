@@ -31,7 +31,7 @@ impl FromStr for ThreadUri {
     type Err = TurlError;
 
     fn from_str(input: &str) -> Result<Self> {
-        let (scheme, id) = input
+        let (scheme, target) = input
             .split_once("://")
             .ok_or_else(|| TurlError::InvalidUri(input.to_string()))?;
 
@@ -39,6 +39,11 @@ impl FromStr for ThreadUri {
             "codex" => ProviderKind::Codex,
             "claude" => ProviderKind::Claude,
             _ => return Err(TurlError::UnsupportedScheme(scheme.to_string())),
+        };
+
+        let id = match provider {
+            ProviderKind::Codex => target.strip_prefix("threads/").unwrap_or(target),
+            ProviderKind::Claude => target,
         };
 
         if !SESSION_ID_RE.is_match(id) {
@@ -60,6 +65,14 @@ mod tests {
     #[test]
     fn parse_valid_uri() {
         let uri = ThreadUri::parse("codex://019c871c-b1f9-7f60-9c4f-87ed09f13592")
+            .expect("parse should succeed");
+        assert_eq!(uri.provider, ProviderKind::Codex);
+        assert_eq!(uri.session_id, "019c871c-b1f9-7f60-9c4f-87ed09f13592");
+    }
+
+    #[test]
+    fn parse_codex_deeplink_uri() {
+        let uri = ThreadUri::parse("codex://threads/019c871c-b1f9-7f60-9c4f-87ed09f13592")
             .expect("parse should succeed");
         assert_eq!(uri.provider, ProviderKind::Codex);
         assert_eq!(uri.session_id, "019c871c-b1f9-7f60-9c4f-87ed09f13592");
