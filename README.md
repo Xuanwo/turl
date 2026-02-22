@@ -59,24 +59,6 @@ Resolution precedence:
 - `turl-core`: URI parsing, provider resolvers, reading, rendering
 - `turl-cli`: CLI wrapper around `turl-core`
 
-## PyPI Publishing
-
-This repository includes a tag-driven release workflow:
-
-- Workflow file: `.github/workflows/pypi-publish.yml`
-- Trigger: push a tag like `v0.1.0`
-- Guardrail: tag version must match `turl-cli/Cargo.toml` version
-- Build: platform wheels + sdist (via `maturin`)
-- Publish: trusted publishing via `pypa/gh-action-pypi-publish`
-
-Required one-time PyPI setup (Trusted Publisher):
-
-- Owner: `Xuanwo`
-- Repository: `turl`
-- PyPI project: `xuanwo-turl`
-- Workflow: `.github/workflows/pypi-publish.yml`
-- Environment (recommended): `pypi`
-
 ## Current Scope
 
 - local filesystem only
