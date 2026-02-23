@@ -31,6 +31,16 @@ impl ThreadUri {
         input.parse()
     }
 
+    pub fn as_agents_string(&self) -> String {
+        match &self.agent_id {
+            Some(agent_id) => format!(
+                "agents://{}/{}/{}",
+                self.provider, self.session_id, agent_id
+            ),
+            None => format!("agents://{}/{}", self.provider, self.session_id),
+        }
+    }
+
     pub fn as_string(&self) -> String {
         match &self.agent_id {
             Some(agent_id) => format!("{}://{}/{}", self.provider, self.session_id, agent_id),
@@ -47,23 +57,27 @@ impl FromStr for ThreadUri {
             .split_once("://")
             .ok_or_else(|| XurlError::InvalidUri(input.to_string()))?;
 
-        let provider = match scheme {
-            "amp" => ProviderKind::Amp,
-            "codex" => ProviderKind::Codex,
-            "claude" => ProviderKind::Claude,
-            "gemini" => ProviderKind::Gemini,
-            "pi" => ProviderKind::Pi,
-            "opencode" => ProviderKind::Opencode,
-            _ => return Err(XurlError::UnsupportedScheme(scheme.to_string())),
+        let (provider, provider_target) = if scheme == "agents" {
+            let (provider_scheme, provider_target) = target
+                .split_once('/')
+                .ok_or_else(|| XurlError::InvalidUri(input.to_string()))?;
+            if provider_target.is_empty() {
+                return Err(XurlError::InvalidUri(input.to_string()));
+            }
+            (parse_provider(provider_scheme)?, provider_target)
+        } else {
+            (parse_provider(scheme)?, target)
         };
 
         let normalized_target = match provider {
-            ProviderKind::Amp => target,
-            ProviderKind::Codex => target.strip_prefix("threads/").unwrap_or(target),
+            ProviderKind::Amp => provider_target,
+            ProviderKind::Codex => provider_target
+                .strip_prefix("threads/")
+                .unwrap_or(provider_target),
             ProviderKind::Claude
             | ProviderKind::Gemini
             | ProviderKind::Pi
-            | ProviderKind::Opencode => target,
+            | ProviderKind::Opencode => provider_target,
         };
 
         let (id, agent_id) = match provider {
@@ -137,6 +151,18 @@ impl FromStr for ThreadUri {
     }
 }
 
+fn parse_provider(scheme: &str) -> Result<ProviderKind> {
+    match scheme {
+        "amp" => Ok(ProviderKind::Amp),
+        "codex" => Ok(ProviderKind::Codex),
+        "claude" => Ok(ProviderKind::Claude),
+        "gemini" => Ok(ProviderKind::Gemini),
+        "pi" => Ok(ProviderKind::Pi),
+        "opencode" => Ok(ProviderKind::Opencode),
+        _ => Err(XurlError::UnsupportedScheme(scheme.to_string())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::ThreadUri;
@@ -170,9 +196,41 @@ mod tests {
     }
 
     #[test]
+    fn parse_agents_uri() {
+        let uri = ThreadUri::parse("agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592")
+            .expect("parse should succeed");
+        assert_eq!(uri.provider, ProviderKind::Codex);
+        assert_eq!(uri.session_id, "019c871c-b1f9-7f60-9c4f-87ed09f13592");
+        assert_eq!(uri.agent_id, None);
+    }
+
+    #[test]
+    fn parse_agents_codex_deeplink_uri() {
+        let uri = ThreadUri::parse("agents://codex/threads/019c871c-b1f9-7f60-9c4f-87ed09f13592")
+            .expect("parse should succeed");
+        assert_eq!(uri.provider, ProviderKind::Codex);
+        assert_eq!(uri.session_id, "019c871c-b1f9-7f60-9c4f-87ed09f13592");
+        assert_eq!(uri.agent_id, None);
+    }
+
+    #[test]
     fn parse_codex_subagent_uri() {
         let uri = ThreadUri::parse(
             "codex://019c871c-b1f9-7f60-9c4f-87ed09f13592/019c87fb-38b9-7843-92b1-832f02598495",
+        )
+        .expect("parse should succeed");
+        assert_eq!(uri.provider, ProviderKind::Codex);
+        assert_eq!(uri.session_id, "019c871c-b1f9-7f60-9c4f-87ed09f13592");
+        assert_eq!(
+            uri.agent_id,
+            Some("019c87fb-38b9-7843-92b1-832f02598495".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_agents_codex_subagent_uri() {
+        let uri = ThreadUri::parse(
+            "agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592/019c87fb-38b9-7843-92b1-832f02598495",
         )
         .expect("parse should succeed");
         assert_eq!(uri.provider, ProviderKind::Codex);
@@ -210,6 +268,13 @@ mod tests {
     fn parse_rejects_invalid_scheme() {
         let err = ThreadUri::parse("cursor://019c871c-b1f9-7f60-9c4f-87ed09f13592")
             .expect_err("must reject unsupported scheme");
+        assert!(format!("{err}").contains("unsupported scheme"));
+    }
+
+    #[test]
+    fn parse_rejects_invalid_agents_provider() {
+        let err = ThreadUri::parse("agents://cursor/019c871c-b1f9-7f60-9c4f-87ed09f13592")
+            .expect_err("must reject unsupported provider");
         assert!(format!("{err}").contains("unsupported scheme"));
     }
 

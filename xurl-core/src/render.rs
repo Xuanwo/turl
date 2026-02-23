@@ -33,7 +33,7 @@ pub fn render_markdown(uri: &ThreadUri, source_path: &Path, raw_jsonl: &str) -> 
 
     let mut output = String::new();
     output.push_str("# Thread\n\n");
-    output.push_str(&format!("- URI: `{}`\n", uri.as_string()));
+    output.push_str(&format!("- URI: `{}`\n", uri.as_agents_string()));
     output.push_str(&format!("- Source: `{}`\n\n", source_path.display()));
 
     if entries.is_empty() {

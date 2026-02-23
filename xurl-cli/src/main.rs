@@ -11,7 +11,7 @@ use xurl_core::{
 #[derive(Debug, Parser)]
 #[command(name = "xurl", version, about = "Resolve and read code-agent threads")]
 struct Cli {
-    /// Thread URI like amp://<session_id>, codex://<session_id>, codex://threads/<session_id>, claude://<session_id>, gemini://<session_id>, pi://<session_id>, pi://<session_id>/<entry_id>, or opencode://<session_id>
+    /// Thread URI like agents://codex/<session_id>, agents://claude/<session_id>, agents://pi/<session_id>/<entry_id>, or legacy forms like codex://<session_id>
     uri: String,
 
     /// Output raw JSON instead of markdown
@@ -19,7 +19,7 @@ struct Cli {
     raw: bool,
 
     /// List subagents for a main thread URI
-    /// For Pi, list session entries for pi://<session_id>
+    /// For Pi, list session entries for agents://pi/<session_id> (legacy pi://<session_id> works too)
     #[arg(long)]
     list: bool,
 }
@@ -59,7 +59,7 @@ fn run(cli: Cli) -> xurl_core::Result<()> {
     if cli.list || (supports_subagent && uri.agent_id.is_some()) {
         if cli.list && uri.agent_id.is_some() {
             return Err(XurlError::InvalidMode(
-                "--list cannot be used with <provider>://<main_thread_id>/<agent_id>".to_string(),
+                "--list cannot be used with child thread URIs like agents://<provider>/<main_thread_id>/<agent_id>".to_string(),
             ));
         }
 

@@ -90,13 +90,14 @@ pub fn resolve_subagent_view(
 ) -> Result<SubagentView> {
     if list && uri.agent_id.is_some() {
         return Err(XurlError::InvalidMode(
-            "--list cannot be used with <provider>://<main_thread_id>/<agent_id>".to_string(),
+            "--list cannot be used with child thread URIs like agents://<provider>/<main_thread_id>/<agent_id>".to_string(),
         ));
     }
 
     if !list && uri.agent_id.is_none() {
         return Err(XurlError::InvalidMode(
-            "subagent drill-down requires <provider>://<main_thread_id>/<agent_id>".to_string(),
+            "subagent drill-down requires agents://<provider>/<main_thread_id>/<agent_id>"
+                .to_string(),
         ));
     }
 
@@ -126,12 +127,12 @@ pub fn resolve_pi_entry_list_view(
 ) -> Result<PiEntryListView> {
     if uri.provider != ProviderKind::Pi {
         return Err(XurlError::InvalidMode(
-            "pi entry listing requires pi://<session_id>".to_string(),
+            "pi entry listing requires agents://pi/<session_id> (legacy pi://<session_id> is also supported)".to_string(),
         ));
     }
     if uri.agent_id.is_some() {
         return Err(XurlError::InvalidMode(
-            "--list cannot be used with pi://<session_id>/<entry_id>".to_string(),
+            "--list cannot be used with agents://pi/<session_id>/<entry_id>".to_string(),
         ));
     }
 
@@ -232,7 +233,7 @@ pub fn pi_entry_list_view_to_raw_json(view: &PiEntryListView) -> Result<String> 
 }
 
 pub fn render_pi_entry_list_markdown(view: &PiEntryListView) -> String {
-    let session_uri = format!("{}://{}", view.query.provider, view.query.session_id);
+    let session_uri = agents_thread_uri(&view.query.provider, &view.query.session_id, None);
     let mut output = String::new();
     output.push_str("# Pi Session Entries\n\n");
     output.push_str(&format!("- Provider: `{}`\n", view.query.provider));
@@ -1145,6 +1146,13 @@ fn make_query(uri: &ThreadUri, agent_id: Option<String>, list: bool) -> Subagent
     }
 }
 
+fn agents_thread_uri(provider: &str, thread_id: &str, agent_id: Option<&str>) -> String {
+    match agent_id {
+        Some(agent_id) => format!("agents://{provider}/{thread_id}/{agent_id}"),
+        None => format!("agents://{provider}/{thread_id}"),
+    }
+}
+
 fn render_preview_text(content: &Value, max_chars: usize) -> String {
     let text = if content.is_string() {
         content.as_str().unwrap_or_default().to_string()
@@ -1183,7 +1191,7 @@ fn truncate_preview(input: &str, max_chars: usize) -> String {
 }
 
 fn render_subagent_list_markdown(view: &SubagentListView) -> String {
-    let main_thread_uri = format!("{}://{}", view.query.provider, view.query.main_thread_id);
+    let main_thread_uri = agents_thread_uri(&view.query.provider, &view.query.main_thread_id, None);
     let mut output = String::new();
     output.push_str("# Subagent Status\n\n");
     output.push_str(&format!("- Provider: `{}`\n", view.query.provider));
@@ -1226,7 +1234,7 @@ fn render_subagent_list_markdown(view: &SubagentListView) -> String {
 }
 
 fn render_subagent_detail_markdown(view: &SubagentDetailView) -> String {
-    let main_thread_uri = format!("{}://{}", view.query.provider, view.query.main_thread_id);
+    let main_thread_uri = agents_thread_uri(&view.query.provider, &view.query.main_thread_id, None);
     let mut output = String::new();
     output.push_str("# Subagent Thread\n\n");
     output.push_str(&format!("- Provider: `{}`\n", view.query.provider));

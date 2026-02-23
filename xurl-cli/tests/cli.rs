@@ -185,8 +185,16 @@ fn codex_uri() -> String {
     format!("codex://{SESSION_ID}")
 }
 
+fn agents_codex_uri() -> String {
+    format!("agents://codex/{SESSION_ID}")
+}
+
 fn codex_deeplink_uri() -> String {
     format!("codex://threads/{SESSION_ID}")
+}
+
+fn agents_codex_deeplink_uri() -> String {
+    format!("agents://codex/threads/{SESSION_ID}")
 }
 
 fn amp_uri() -> String {
@@ -197,12 +205,24 @@ fn codex_subagent_uri() -> String {
     format!("codex://{SESSION_ID}/{SUBAGENT_ID}")
 }
 
+fn agents_codex_subagent_uri() -> String {
+    format!("agents://codex/{SESSION_ID}/{SUBAGENT_ID}")
+}
+
 fn claude_uri() -> String {
     format!("claude://{CLAUDE_SESSION_ID}")
 }
 
 fn claude_subagent_uri() -> String {
     format!("claude://{CLAUDE_SESSION_ID}/{CLAUDE_AGENT_ID}")
+}
+
+fn agents_uri(provider: &str, session_id: &str) -> String {
+    format!("agents://{provider}/{session_id}")
+}
+
+fn agents_child_uri(provider: &str, session_id: &str, child_id: &str) -> String {
+    format!("agents://{provider}/{session_id}/{child_id}")
 }
 
 fn gemini_uri() -> String {
@@ -253,6 +273,23 @@ fn default_outputs_markdown() {
 }
 
 #[test]
+fn agents_uri_outputs_markdown() {
+    let temp = setup_codex_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .env("CLAUDE_CONFIG_DIR", temp.path().join("missing-claude"))
+        .arg(agents_codex_uri())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "- URI: `agents://codex/{SESSION_ID}`"
+        )))
+        .stdout(predicate::str::contains("## 1. User"))
+        .stdout(predicate::str::contains("hello"));
+}
+
+#[test]
 fn raw_outputs_json() {
     let temp = setup_codex_tree();
 
@@ -282,6 +319,21 @@ fn codex_deeplink_outputs_markdown() {
 }
 
 #[test]
+fn agents_codex_deeplink_outputs_markdown() {
+    let temp = setup_codex_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .env("CLAUDE_CONFIG_DIR", temp.path().join("missing-claude"))
+        .arg(agents_codex_deeplink_uri())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Thread"))
+        .stdout(predicate::str::contains("## 1. User"))
+        .stdout(predicate::str::contains("hello"));
+}
+
+#[test]
 fn codex_list_raw_outputs_aggregate_json() {
     let temp = setup_codex_subagent_tree();
 
@@ -301,8 +353,8 @@ fn codex_list_raw_outputs_aggregate_json() {
 #[test]
 fn codex_subagent_outputs_markdown_view() {
     let temp = setup_codex_subagent_tree();
-    let main_uri = format!("codex://{SESSION_ID}");
-    let subagent_uri = format!("{main_uri}/{SUBAGENT_ID}");
+    let main_uri = agents_uri("codex", SESSION_ID);
+    let subagent_uri = agents_child_uri("codex", SESSION_ID, SUBAGENT_ID);
 
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
     cmd.env("CODEX_HOME", temp.path())
@@ -319,6 +371,26 @@ fn codex_subagent_outputs_markdown_view() {
         )))
         .stdout(predicate::str::contains("## Lifecycle (Parent Thread)"))
         .stdout(predicate::str::contains("## Thread Excerpt (Child Thread)"));
+}
+
+#[test]
+fn agents_codex_subagent_outputs_markdown_view() {
+    let temp = setup_codex_subagent_tree();
+    let main_uri = agents_uri("codex", SESSION_ID);
+    let subagent_uri = agents_child_uri("codex", SESSION_ID, SUBAGENT_ID);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .env("CLAUDE_CONFIG_DIR", temp.path().join("missing-claude"))
+        .arg(agents_codex_subagent_uri())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "- Main Thread: `{main_uri}`"
+        )))
+        .stdout(predicate::str::contains(format!(
+            "- Subagent Thread: `{subagent_uri}`"
+        )));
 }
 
 #[test]
@@ -353,8 +425,8 @@ fn codex_subagent_outputs_no_warning_text_for_markdown() {
 fn codex_real_fixture_subagent_list_outputs_markdown() {
     let fixture_root = codex_real_fixture_root();
     assert!(fixture_root.exists(), "fixture root must exist");
-    let main_uri = format!("codex://{REAL_FIXTURE_MAIN_ID}");
-    let subagent_uri = format!("{main_uri}/{REAL_FIXTURE_AGENT_ID}");
+    let main_uri = agents_uri("codex", REAL_FIXTURE_MAIN_ID);
+    let subagent_uri = agents_child_uri("codex", REAL_FIXTURE_MAIN_ID, REAL_FIXTURE_AGENT_ID);
 
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
     cmd.env("CODEX_HOME", fixture_root)
@@ -530,7 +602,7 @@ fn pi_list_outputs_markdown() {
         .success()
         .stdout(predicate::str::contains("# Pi Session Entries"))
         .stdout(predicate::str::contains(format!(
-            "pi://{PI_SESSION_ID}/a1b2c3d4"
+            "agents://pi/{PI_SESSION_ID}/a1b2c3d4"
         )))
         .stdout(predicate::str::contains("- Leaf: `yes`"));
 }
@@ -565,7 +637,9 @@ fn pi_list_rejects_entry_uri() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("invalid mode"))
-        .stderr(predicate::str::contains("pi://<session_id>/<entry_id>"));
+        .stderr(predicate::str::contains(
+            "agents://pi/<session_id>/<entry_id>",
+        ));
 }
 
 #[test]
@@ -603,8 +677,8 @@ fn claude_list_raw_outputs_aggregate_json() {
 #[test]
 fn claude_subagent_outputs_markdown_view() {
     let temp = setup_claude_subagent_tree();
-    let main_uri = format!("claude://{CLAUDE_SESSION_ID}");
-    let subagent_uri = format!("{main_uri}/{CLAUDE_AGENT_ID}");
+    let main_uri = agents_uri("claude", CLAUDE_SESSION_ID);
+    let subagent_uri = agents_child_uri("claude", CLAUDE_SESSION_ID, CLAUDE_AGENT_ID);
 
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
     cmd.env("CLAUDE_CONFIG_DIR", temp.path())
@@ -626,8 +700,8 @@ fn claude_subagent_outputs_markdown_view() {
 fn claude_real_fixture_subagent_list_outputs_markdown() {
     let fixture_root = claude_real_fixture_root();
     assert!(fixture_root.exists(), "fixture root must exist");
-    let main_uri = format!("claude://{CLAUDE_REAL_MAIN_ID}");
-    let subagent_uri = format!("{main_uri}/{CLAUDE_REAL_AGENT_ID}");
+    let main_uri = agents_uri("claude", CLAUDE_REAL_MAIN_ID);
+    let subagent_uri = agents_child_uri("claude", CLAUDE_REAL_MAIN_ID, CLAUDE_REAL_AGENT_ID);
 
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
     cmd.env("CLAUDE_CONFIG_DIR", fixture_root)
