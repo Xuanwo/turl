@@ -8,7 +8,7 @@ use turl_core::{
 #[derive(Debug, Parser)]
 #[command(name = "turl", version, about = "Resolve and read code-agent threads")]
 struct Cli {
-    /// Thread URI like amp://<session_id>, codex://<session_id>, codex://threads/<session_id>, claude://<session_id>, or opencode://<session_id>
+    /// Thread URI like amp://<session_id>, codex://<session_id>, codex://threads/<session_id>, claude://<session_id>, gemini://<session_id>, or opencode://<session_id>
     uri: String,
 
     /// Output raw JSON instead of markdown

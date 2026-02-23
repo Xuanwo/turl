@@ -8,8 +8,9 @@
   - <img src="https://ampcode.com/amp-mark-color.svg" alt="Amp logo" width="16" height="16" /> Amp
   - <img src="https://avatars.githubusercontent.com/u/14957082?s=24&v=4" alt="Codex logo" width="16" height="16" /> Codex
   - <img src="https://www.anthropic.com/favicon.ico" alt="Claude logo" width="16" height="16" /> Claude
+  - <img src="https://www.google.com/favicon.ico" alt="Gemini logo" width="16" height="16" /> Gemini
   - <img src="https://opencode.ai/favicon.ico" alt="OpenCode logo" width="16" height="16" /> OpenCode
-- Default output is markdown with user/assistant-focused content.
+- Default output is timeline markdown with user/assistant messages and compact markers.
 - `--raw` outputs raw thread records.
 - Automatically respects official environment variables and default local data roots for each supported agent.
 
@@ -71,8 +72,17 @@ turl claude://2823d1df-720a-4c31-ac55-ae8ba726721f
 turl opencode://ses_43a90e3adffejRgrTdlJa48CtE
 ```
 
-### Raw Output
+### Gemini
+
+- Supported URI:
+  - `gemini://<session_id>`
+- Session id format:
+  - `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
+- Resolution:
+  - `GEMINI_CLI_HOME/.gemini/tmp/*/chats/session-*.json`
+  - fallback: `~/.gemini/tmp/*/chats/session-*.json`
+- Example:
 
 ```bash
-turl codex://019c871c-b1f9-7f60-9c4f-87ed09f13592 --raw
+turl gemini://29d207db-ca7e-40ba-87f7-e14c9de60613
 ```

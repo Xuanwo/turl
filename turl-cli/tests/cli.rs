@@ -6,6 +6,7 @@ use tempfile::tempdir;
 
 const SESSION_ID: &str = "019c871c-b1f9-7f60-9c4f-87ed09f13592";
 const AMP_SESSION_ID: &str = "T-019c0797-c402-7389-bd80-d785c98df295";
+const GEMINI_SESSION_ID: &str = "29d207db-ca7e-40ba-87f7-e14c9de60613";
 
 fn setup_codex_tree() -> tempfile::TempDir {
     let temp = tempdir().expect("tempdir");
@@ -36,6 +37,32 @@ fn setup_amp_tree() -> tempfile::TempDir {
     temp
 }
 
+fn setup_gemini_tree() -> tempfile::TempDir {
+    let temp = tempdir().expect("tempdir");
+    let thread_path = temp.path().join(
+        ".gemini/tmp/0c0d7b04c22749f3687ea60b66949fd32bcea2551d4349bf72346a9ccc9a9ba4/chats/session-2026-01-08T11-55-29-29d207db.json",
+    );
+    fs::create_dir_all(thread_path.parent().expect("parent")).expect("mkdir");
+    fs::write(
+        &thread_path,
+        format!(
+            r#"{{
+  "sessionId": "{GEMINI_SESSION_ID}",
+  "projectHash": "0c0d7b04c22749f3687ea60b66949fd32bcea2551d4349bf72346a9ccc9a9ba4",
+  "startTime": "2026-01-08T11:55:12.379Z",
+  "lastUpdated": "2026-01-08T12:31:14.881Z",
+  "messages": [
+    {{ "type": "info", "content": "ignored" }},
+    {{ "type": "user", "content": "hello" }},
+    {{ "type": "gemini", "content": "world" }}
+  ]
+}}"#
+        ),
+    )
+    .expect("write");
+    temp
+}
+
 fn codex_uri() -> String {
     format!("codex://{SESSION_ID}")
 }
@@ -46,6 +73,10 @@ fn codex_deeplink_uri() -> String {
 
 fn amp_uri() -> String {
     format!("amp://{AMP_SESSION_ID}")
+}
+
+fn gemini_uri() -> String {
+    format!("gemini://{GEMINI_SESSION_ID}")
 }
 
 #[test]
@@ -136,4 +167,32 @@ fn amp_raw_outputs_json() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"messages\""));
+}
+
+#[test]
+fn gemini_outputs_markdown() {
+    let temp = setup_gemini_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("turl"));
+    cmd.env("GEMINI_CLI_HOME", temp.path())
+        .arg(gemini_uri())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Thread"))
+        .stdout(predicate::str::contains("## 1. User"))
+        .stdout(predicate::str::contains("hello"))
+        .stdout(predicate::str::contains("world"));
+}
+
+#[test]
+fn gemini_raw_outputs_json() {
+    let temp = setup_gemini_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("turl"));
+    cmd.env("GEMINI_CLI_HOME", temp.path())
+        .arg(gemini_uri())
+        .arg("--raw")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"sessionId\""));
 }

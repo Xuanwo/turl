@@ -45,6 +45,7 @@ impl FromStr for ThreadUri {
             "amp" => ProviderKind::Amp,
             "codex" => ProviderKind::Codex,
             "claude" => ProviderKind::Claude,
+            "gemini" => ProviderKind::Gemini,
             "opencode" => ProviderKind::Opencode,
             _ => return Err(TurlError::UnsupportedScheme(scheme.to_string())),
         };
@@ -52,14 +53,16 @@ impl FromStr for ThreadUri {
         let id = match provider {
             ProviderKind::Amp => target,
             ProviderKind::Codex => target.strip_prefix("threads/").unwrap_or(target),
-            ProviderKind::Claude | ProviderKind::Opencode => target,
+            ProviderKind::Claude | ProviderKind::Gemini | ProviderKind::Opencode => target,
         };
 
         match provider {
             ProviderKind::Amp if !AMP_SESSION_ID_RE.is_match(id) => {
                 return Err(TurlError::InvalidSessionId(id.to_string()));
             }
-            ProviderKind::Codex | ProviderKind::Claude if !SESSION_ID_RE.is_match(id) => {
+            ProviderKind::Codex | ProviderKind::Claude | ProviderKind::Gemini
+                if !SESSION_ID_RE.is_match(id) =>
+            {
                 return Err(TurlError::InvalidSessionId(id.to_string()));
             }
             ProviderKind::Opencode if !OPENCODE_SESSION_ID_RE.is_match(id) => {
@@ -70,7 +73,9 @@ impl FromStr for ThreadUri {
 
         let session_id = match provider {
             ProviderKind::Amp => format!("T-{}", id[2..].to_ascii_lowercase()),
-            ProviderKind::Codex | ProviderKind::Claude => id.to_ascii_lowercase(),
+            ProviderKind::Codex | ProviderKind::Claude | ProviderKind::Gemini => {
+                id.to_ascii_lowercase()
+            }
             ProviderKind::Opencode => id.to_string(),
         };
 
@@ -129,5 +134,13 @@ mod tests {
             .expect("parse should succeed");
         assert_eq!(uri.provider, ProviderKind::Opencode);
         assert_eq!(uri.session_id, "ses_43a90e3adffejRgrTdlJa48CtE");
+    }
+
+    #[test]
+    fn parse_valid_gemini_uri() {
+        let uri = ThreadUri::parse("gemini://29D207DB-CA7E-40BA-87F7-E14C9DE60613")
+            .expect("parse should succeed");
+        assert_eq!(uri.provider, ProviderKind::Gemini);
+        assert_eq!(uri.session_id, "29d207db-ca7e-40ba-87f7-e14c9de60613");
     }
 }

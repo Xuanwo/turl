@@ -6,6 +6,7 @@ use crate::model::{ProviderKind, ResolvedThread};
 use crate::provider::amp::AmpProvider;
 use crate::provider::claude::ClaudeProvider;
 use crate::provider::codex::CodexProvider;
+use crate::provider::gemini::GeminiProvider;
 use crate::provider::opencode::OpencodeProvider;
 use crate::provider::{Provider, ProviderRoots};
 use crate::render;
@@ -16,6 +17,7 @@ pub fn resolve_thread(uri: &ThreadUri, roots: &ProviderRoots) -> Result<Resolved
         ProviderKind::Amp => AmpProvider::new(&roots.amp_root).resolve(&uri.session_id),
         ProviderKind::Codex => CodexProvider::new(&roots.codex_root).resolve(&uri.session_id),
         ProviderKind::Claude => ClaudeProvider::new(&roots.claude_root).resolve(&uri.session_id),
+        ProviderKind::Gemini => GeminiProvider::new(&roots.gemini_root).resolve(&uri.session_id),
         ProviderKind::Opencode => {
             OpencodeProvider::new(&roots.opencode_root).resolve(&uri.session_id)
         }

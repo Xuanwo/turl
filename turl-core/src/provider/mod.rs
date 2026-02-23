@@ -9,6 +9,7 @@ use crate::model::ResolvedThread;
 pub mod amp;
 pub mod claude;
 pub mod codex;
+pub mod gemini;
 pub mod opencode;
 
 pub trait Provider {
@@ -20,6 +21,7 @@ pub struct ProviderRoots {
     pub amp_root: PathBuf,
     pub codex_root: PathBuf,
     pub claude_root: PathBuf,
+    pub gemini_root: PathBuf,
     pub opencode_root: PathBuf,
 }
 
@@ -51,6 +53,14 @@ impl ProviderRoots {
             .unwrap_or_else(|| home.join(".claude"));
 
         // Precedence:
+        // 1) GEMINI_CLI_HOME/.gemini (official Gemini CLI home env)
+        // 2) ~/.gemini (Gemini default)
+        let gemini_root = env::var_os("GEMINI_CLI_HOME")
+            .map(PathBuf::from)
+            .map(|path| path.join(".gemini"))
+            .unwrap_or_else(|| home.join(".gemini"));
+
+        // Precedence:
         // 1) XDG_DATA_HOME/opencode
         // 2) ~/.local/share/opencode
         let opencode_root = env::var_os("XDG_DATA_HOME")
@@ -63,6 +73,7 @@ impl ProviderRoots {
             amp_root,
             codex_root,
             claude_root,
+            gemini_root,
             opencode_root,
         })
     }
