@@ -22,6 +22,16 @@
 - The workspace enforces `cargo clippy` with `all = warn` and `pedantic = warn` at the root (`Cargo.toml` workspace lints); follow Rust formatting conventions and keep identifiers/comments in English.
 - Tests are scoped to the crates (`turl-cli/tests/cli.rs` for argument coverage and raw output, `turl-core` unit tests for file-reading edge cases). Run `cargo test` when touching parsing, rendering, or CLI behaviors.
 
+## Provider Fixture Policy
+- Use the same fixture method for Codex, Claude, OpenCode, and Gemini integration tests: start from local real thread files, then sanitize them for repository fixtures.
+- Keep the original record structure unchanged (`JSON/JSONL` object shape, event layout, field presence, scalar types). Randomize string content only.
+- Preserve parser-critical discriminator values and keys (for example event/type names and stable schema keys) so runtime parsing behavior stays representative.
+- Replace sensitive or identifying string values with deterministic random placeholders, including nested serialized JSON inside string fields such as `arguments` and `output`.
+- Preserve cross-record and cross-file linkage consistency after sanitization (for example main thread id, subagent id, `call_id`, and parent-child references).
+- Store provider fixtures under `turl-cli/tests/fixtures/<provider>_real_sanitized/` with a small `manifest.json` that documents fixture ids used by tests.
+- Prefer medium-size real samples that still cover target behavior (for example subagent lifecycle for Claude/Codex, message/parts for OpenCode, session/message variants for Gemini) to keep repository size reasonable.
+- Every new sanitized fixture must be exercised by at least one CLI integration test in `turl-cli/tests/cli.rs`.
+
 ## Documentation Sync Requirement
 - Any new feature, behavior change, provider support, URI rule update, or command usage change must update both:
   - `README.md`
