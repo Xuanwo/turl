@@ -102,9 +102,28 @@ jobs:
       - name: Download vendor artifacts
         uses: actions/download-artifact@v4
         with:
-          path: dist/vendor
+          path: dist/vendor-artifacts
           pattern: vendor-*
-          merge-multiple: true
+
+      - name: Assemble vendor tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/vendor
+
+          shopt -s nullglob
+          for artifact_dir in dist/vendor-artifacts/vendor-*; do
+            target="${artifact_dir##*/vendor-}"
+            mkdir -p "dist/vendor/${target}"
+
+            if [[ -d "${artifact_dir}/${target}" ]]; then
+              cp -R "${artifact_dir}/${target}/." "dist/vendor/${target}/"
+            else
+              cp -R "${artifact_dir}/." "dist/vendor/${target}/"
+            fi
+          done
+
+          find dist/vendor -maxdepth 4 -type f | sort
 
       - name: Stage npm packages
         shell: bash
