@@ -6,6 +6,7 @@ use dirs::home_dir;
 use crate::error::{Result, TurlError};
 use crate::model::ResolvedThread;
 
+pub mod amp;
 pub mod claude;
 pub mod codex;
 pub mod opencode;
@@ -16,6 +17,7 @@ pub trait Provider {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderRoots {
+    pub amp_root: PathBuf,
     pub codex_root: PathBuf,
     pub claude_root: PathBuf,
     pub opencode_root: PathBuf,
@@ -24,6 +26,15 @@ pub struct ProviderRoots {
 impl ProviderRoots {
     pub fn from_env_or_home() -> Result<Self> {
         let home = home_dir().ok_or(TurlError::HomeDirectoryNotFound)?;
+
+        // Precedence:
+        // 1) XDG_DATA_HOME/amp
+        // 2) ~/.local/share/amp
+        let amp_root = env::var_os("XDG_DATA_HOME")
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+            .map(|path| path.join("amp"))
+            .unwrap_or_else(|| home.join(".local/share/amp"));
 
         // Precedence:
         // 1) CODEX_HOME (official Codex home env)
@@ -49,6 +60,7 @@ impl ProviderRoots {
             .unwrap_or_else(|| home.join(".local/share/opencode"));
 
         Ok(Self {
+            amp_root,
             codex_root,
             claude_root,
             opencode_root,

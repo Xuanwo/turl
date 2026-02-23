@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderKind {
+    Amp,
     Codex,
     Claude,
     Opencode,
@@ -11,6 +12,7 @@ pub enum ProviderKind {
 impl fmt::Display for ProviderKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Amp => write!(f, "amp"),
             Self::Codex => write!(f, "codex"),
             Self::Claude => write!(f, "claude"),
             Self::Opencode => write!(f, "opencode"),
