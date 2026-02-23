@@ -5,7 +5,7 @@
 ## Features
 
 - Multi-agent thread resolution:
-  - <img src="https://ampcode.com/favicon.ico" alt="Amp logo" width="16" height="16" /> Amp
+  - <img src="https://ampcode.com/amp-mark-color.svg" alt="Amp logo" width="16" height="16" /> Amp
   - <img src="https://avatars.githubusercontent.com/u/14957082?s=24&v=4" alt="Codex logo" width="16" height="16" /> Codex
   - <img src="https://www.anthropic.com/favicon.ico" alt="Claude logo" width="16" height="16" /> Claude
   - <img src="https://opencode.ai/favicon.ico" alt="OpenCode logo" width="16" height="16" /> OpenCode
