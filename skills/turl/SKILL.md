@@ -1,6 +1,6 @@
 ---
 name: turl
-description: Use the turl CLI to resolve Codex, Claude, or OpenCode thread URIs and print thread content in markdown or raw records.
+description: Use the turl CLI to resolve Amp, Codex, Claude, or OpenCode thread URIs and print thread content in markdown or raw records.
 ---
 
 # turl
@@ -18,7 +18,7 @@ turl --version
 
 ## When to Use
 
-- The user gives a `codex://...`, `codex://threads/...`, `claude://...`, or `opencode://...` URI.
+- The user gives an `amp://...`, `codex://...`, `codex://threads/...`, `claude://...`, or `opencode://...` URI.
 - The user asks to inspect, view, or fetch thread content.
 
 ## Input
@@ -26,6 +26,7 @@ turl --version
 - A thread URI in one of these forms:
   - `codex://<session_id>`
   - `codex://threads/<session_id>`
+  - `amp://<thread_id>`
   - `claude://<session_id>`
   - `opencode://<session_id>`
 
@@ -59,6 +60,12 @@ OpenCode thread example:
 
 ```bash
 turl opencode://ses_43a90e3adffejRgrTdlJa48CtE
+```
+
+Amp thread example:
+
+```bash
+turl amp://T-019c0797-c402-7389-bd80-d785c98df295
 ```
 
 ## Agent Behavior

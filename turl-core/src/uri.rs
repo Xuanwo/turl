@@ -10,6 +10,10 @@ static SESSION_ID_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
         .expect("valid regex")
 });
+static AMP_SESSION_ID_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)^t-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+        .expect("valid regex")
+});
 static OPENCODE_SESSION_ID_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^ses_[0-9A-Za-z]+$").expect("valid regex"));
 
@@ -38,6 +42,7 @@ impl FromStr for ThreadUri {
             .ok_or_else(|| TurlError::InvalidUri(input.to_string()))?;
 
         let provider = match scheme {
+            "amp" => ProviderKind::Amp,
             "codex" => ProviderKind::Codex,
             "claude" => ProviderKind::Claude,
             "opencode" => ProviderKind::Opencode,
@@ -45,11 +50,15 @@ impl FromStr for ThreadUri {
         };
 
         let id = match provider {
+            ProviderKind::Amp => target,
             ProviderKind::Codex => target.strip_prefix("threads/").unwrap_or(target),
             ProviderKind::Claude | ProviderKind::Opencode => target,
         };
 
         match provider {
+            ProviderKind::Amp if !AMP_SESSION_ID_RE.is_match(id) => {
+                return Err(TurlError::InvalidSessionId(id.to_string()));
+            }
             ProviderKind::Codex | ProviderKind::Claude if !SESSION_ID_RE.is_match(id) => {
                 return Err(TurlError::InvalidSessionId(id.to_string()));
             }
@@ -60,6 +69,7 @@ impl FromStr for ThreadUri {
         }
 
         let session_id = match provider {
+            ProviderKind::Amp => format!("T-{}", id[2..].to_ascii_lowercase()),
             ProviderKind::Codex | ProviderKind::Claude => id.to_ascii_lowercase(),
             ProviderKind::Opencode => id.to_string(),
         };
@@ -82,6 +92,14 @@ mod tests {
             .expect("parse should succeed");
         assert_eq!(uri.provider, ProviderKind::Codex);
         assert_eq!(uri.session_id, "019c871c-b1f9-7f60-9c4f-87ed09f13592");
+    }
+
+    #[test]
+    fn parse_valid_amp_uri() {
+        let uri = ThreadUri::parse("amp://T-019C0797-C402-7389-BD80-D785C98DF295")
+            .expect("parse should succeed");
+        assert_eq!(uri.provider, ProviderKind::Amp);
+        assert_eq!(uri.session_id, "T-019c0797-c402-7389-bd80-d785c98df295");
     }
 
     #[test]
