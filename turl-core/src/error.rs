@@ -13,6 +13,15 @@ pub enum TurlError {
     #[error("invalid session id: {0}")]
     InvalidSessionId(String),
 
+    #[error("invalid mode: {0}")]
+    InvalidMode(String),
+
+    #[error("provider does not support subagent queries: {0}")]
+    UnsupportedSubagentProvider(String),
+
+    #[error("serialization error: {0}")]
+    Serialization(String),
+
     #[error("cannot determine home directory")]
     HomeDirectoryNotFound,
 
