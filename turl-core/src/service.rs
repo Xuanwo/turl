@@ -1032,13 +1032,6 @@ fn render_subagent_list_markdown(view: &SubagentListView) -> String {
         output.push('\n');
     }
 
-    if !view.warnings.is_empty() {
-        output.push_str("## Warnings\n\n");
-        for warning in &view.warnings {
-            output.push_str(&format!("- {}\n", warning));
-        }
-    }
-
     output
 }
 
@@ -1104,13 +1097,6 @@ fn render_subagent_detail_markdown(view: &SubagentDetailView) -> String {
             output.push_str(&format!("### {}. {}\n\n", index + 1, title));
             output.push_str(message.text.trim());
             output.push_str("\n\n");
-        }
-    }
-
-    if !view.warnings.is_empty() {
-        output.push_str("## Warnings\n\n");
-        for warning in &view.warnings {
-            output.push_str(&format!("- {}\n", warning));
         }
     }
 

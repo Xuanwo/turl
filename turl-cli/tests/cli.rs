@@ -26,6 +26,12 @@ fn setup_codex_tree() -> tempfile::TempDir {
     temp
 }
 
+fn setup_codex_tree_with_sqlite_missing_threads() -> tempfile::TempDir {
+    let temp = setup_codex_tree();
+    fs::write(temp.path().join("state.sqlite"), "").expect("write sqlite");
+    temp
+}
+
 fn setup_amp_tree() -> tempfile::TempDir {
     let temp = tempdir().expect("tempdir");
     let thread_path = temp
@@ -66,6 +72,12 @@ fn setup_codex_subagent_tree() -> tempfile::TempDir {
     )
     .expect("write child");
 
+    temp
+}
+
+fn setup_codex_subagent_tree_with_sqlite_missing_threads() -> tempfile::TempDir {
+    let temp = setup_codex_subagent_tree();
+    fs::write(temp.path().join("state.sqlite"), "").expect("write sqlite");
     temp
 }
 
@@ -208,7 +220,8 @@ fn codex_list_raw_outputs_aggregate_json() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"kind\": \"list\""))
-        .stdout(predicate::str::contains(SUBAGENT_ID));
+        .stdout(predicate::str::contains(SUBAGENT_ID))
+        .stdout(predicate::str::contains("\"warnings\"").not());
 }
 
 #[test]
@@ -224,6 +237,34 @@ fn codex_subagent_outputs_markdown_view() {
         .stdout(predicate::str::contains("# Subagent Thread"))
         .stdout(predicate::str::contains("## Lifecycle (Parent Thread)"))
         .stdout(predicate::str::contains("## Thread Excerpt (Child Thread)"));
+}
+
+#[test]
+fn codex_outputs_no_warning_text_for_markdown() {
+    let temp = setup_codex_tree_with_sqlite_missing_threads();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("turl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .env("CLAUDE_CONFIG_DIR", temp.path().join("missing-claude"))
+        .arg(codex_uri())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("warning:").not());
+}
+
+#[test]
+fn codex_subagent_outputs_no_warning_text_for_markdown() {
+    let temp = setup_codex_subagent_tree_with_sqlite_missing_threads();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("turl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .env("CLAUDE_CONFIG_DIR", temp.path().join("missing-claude"))
+        .arg(codex_uri())
+        .arg("--list")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("## Warnings").not())
+        .stderr(predicate::str::contains("warning:").not());
 }
 
 #[test]
@@ -327,7 +368,8 @@ fn claude_list_raw_outputs_aggregate_json() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"kind\": \"list\""))
-        .stdout(predicate::str::contains(CLAUDE_AGENT_ID));
+        .stdout(predicate::str::contains(CLAUDE_AGENT_ID))
+        .stdout(predicate::str::contains("\"warnings\"").not());
 }
 
 #[test]

@@ -112,5 +112,5 @@ turl amp://T-019c0797-c402-7389-bd80-d785c98df295
 
 ## Failure Handling
 
-- Surface `turl` stderr as-is.
+- Only fatal failures are emitted on `stderr`; non-fatal diagnostics are not printed.
 - Common failures include invalid URI format and missing thread files.

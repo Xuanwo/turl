@@ -45,13 +45,6 @@ fn run(cli: Cli) -> turl_core::Result<()> {
         }
 
         let view = resolve_subagent_view(&uri, &roots, cli.list)?;
-        let warnings = match &view {
-            turl_core::SubagentView::List(list_view) => &list_view.warnings,
-            turl_core::SubagentView::Detail(detail_view) => &detail_view.warnings,
-        };
-        for warning in warnings {
-            eprintln!("warning: {warning}");
-        }
 
         if cli.raw {
             let raw_json = subagent_view_to_raw_json(&view)?;
@@ -64,9 +57,6 @@ fn run(cli: Cli) -> turl_core::Result<()> {
     }
 
     let resolved = resolve_thread(&uri, &roots)?;
-    for warning in &resolved.metadata.warnings {
-        eprintln!("warning: {warning}");
-    }
 
     if cli.raw {
         let content = read_thread_raw(&resolved.path)?;

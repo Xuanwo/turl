@@ -13,6 +13,7 @@
 - Default output is timeline markdown with user/assistant messages and compact markers.
 - `--raw` outputs raw thread records.
 - `--list` outputs subagent status aggregation for providers that support subagent transcripts.
+- Non-fatal diagnostics are kept internal; only fatal errors are printed to `stderr`.
 - Automatically respects official environment variables and default local data roots for each supported agent.
 
 ## Install

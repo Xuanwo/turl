@@ -103,6 +103,7 @@ pub struct SubagentDetailView {
     pub status_source: String,
     pub child_thread: Option<SubagentThreadRef>,
     pub excerpt: Vec<SubagentExcerptMessage>,
+    #[serde(skip_serializing)]
     pub warnings: Vec<String>,
 }
 
@@ -120,6 +121,7 @@ pub struct SubagentListItem {
 pub struct SubagentListView {
     pub query: SubagentQuery,
     pub agents: Vec<SubagentListItem>,
+    #[serde(skip_serializing)]
     pub warnings: Vec<String>,
 }
 
