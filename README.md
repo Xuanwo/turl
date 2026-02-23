@@ -12,6 +12,8 @@
   - <img src="https://opencode.ai/favicon.ico" alt="OpenCode logo" width="16" height="16" /> OpenCode
 - Default output is timeline markdown with user/assistant messages and compact markers.
 - `--raw` outputs raw thread records.
+- `--list` outputs subagent status aggregation for providers that support subagent transcripts.
+- Non-fatal diagnostics are kept internal; only fatal errors are printed to `stderr`.
 - Automatically respects official environment variables and default local data roots for each supported agent.
 
 ## Install
@@ -42,6 +44,10 @@ turl amp://T-019c0797-c402-7389-bd80-d785c98df295
 - Supported URIs:
   - `codex://<session_id>`
   - `codex://threads/<session_id>`
+  - `codex://<main_session_id>/<agent_id>`
+- Subagent modes:
+  - Aggregate: `turl codex://<main_session_id> --list`
+  - Drill-down: `turl codex://<main_session_id>/<agent_id>`
 - Resolution order:
   - SQLite thread index under `CODEX_HOME` (`state_<version>.sqlite` first, then `state.sqlite`) via `threads(id, rollout_path, archived)`.
   - Filesystem fallback under `sessions/` and `archived_sessions/` for `rollout-*.jsonl`.
@@ -50,16 +56,24 @@ turl amp://T-019c0797-c402-7389-bd80-d785c98df295
 ```bash
 turl codex://019c871c-b1f9-7f60-9c4f-87ed09f13592
 turl codex://threads/019c871c-b1f9-7f60-9c4f-87ed09f13592
+turl codex://019c871c-b1f9-7f60-9c4f-87ed09f13592 --list
+turl codex://019c871c-b1f9-7f60-9c4f-87ed09f13592/019c87fb-38b9-7843-92b1-832f02598495
 ```
 
 ### Claude
 
-- Supported URI:
+- Supported URIs:
   - `claude://<session_id>`
+  - `claude://<main_session_id>/<agent_id>`
+- Subagent modes:
+  - Aggregate: `turl claude://<main_session_id> --list`
+  - Drill-down: `turl claude://<main_session_id>/<agent_id>`
 - Example:
 
 ```bash
 turl claude://2823d1df-720a-4c31-ac55-ae8ba726721f
+turl claude://2823d1df-720a-4c31-ac55-ae8ba726721f --list
+turl claude://2823d1df-720a-4c31-ac55-ae8ba726721f/acompact-69d537
 ```
 
 ### OpenCode

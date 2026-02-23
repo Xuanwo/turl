@@ -26,8 +26,10 @@ turl --version
 - A thread URI in one of these forms:
   - `codex://<session_id>`
   - `codex://threads/<session_id>`
+  - `codex://<main_session_id>/<agent_id>`
   - `amp://<thread_id>`
   - `claude://<session_id>`
+  - `claude://<main_session_id>/<agent_id>`
   - `gemini://<session_id>`
   - `opencode://<session_id>`
 
@@ -45,10 +47,34 @@ Raw JSONL output:
 turl codex://019c871c-b1f9-7f60-9c4f-87ed09f13592 --raw
 ```
 
+Codex subagent aggregate view:
+
+```bash
+turl codex://019c871c-b1f9-7f60-9c4f-87ed09f13592 --list
+```
+
+Codex subagent drill-down:
+
+```bash
+turl codex://019c871c-b1f9-7f60-9c4f-87ed09f13592/019c87fb-38b9-7843-92b1-832f02598495
+```
+
 Claude thread example:
 
 ```bash
 turl claude://2823d1df-720a-4c31-ac55-ae8ba726721f
+```
+
+Claude subagent aggregate view:
+
+```bash
+turl claude://2823d1df-720a-4c31-ac55-ae8ba726721f --list
+```
+
+Claude subagent drill-down:
+
+```bash
+turl claude://2823d1df-720a-4c31-ac55-ae8ba726721f/acompact-69d537
 ```
 
 Codex deep-link example:
@@ -78,6 +104,7 @@ turl amp://T-019c0797-c402-7389-bd80-d785c98df295
 ## Agent Behavior
 
 - If the user does not request `--raw`, use default markdown output first.
+- If the user asks for subagent aggregation, use `--list` with the parent thread URI.
 - If the user requests exact records, rerun with `--raw`.
 - Return the command output directly.
 - Do not infer or reinterpret thread meaning unless the user explicitly asks for analysis.
@@ -85,5 +112,5 @@ turl amp://T-019c0797-c402-7389-bd80-d785c98df295
 
 ## Failure Handling
 
-- Surface `turl` stderr as-is.
+- Only fatal failures are emitted on `stderr`; non-fatal diagnostics are not printed.
 - Common failures include invalid URI format and missing thread files.

@@ -1,0 +1,8 @@
+{
+  "description": "Sanitized Codex subagent fixture generated from local real history. Structure preserved, scalar string content randomized.",
+  "main_thread_id": "55fe4488-c6bd-46fa-9390-dab3b8860b95",
+  "agent_ids": [
+    "29bf19c3-b83e-401d-8f38-5660b7f67152",
+    "f3a61d18-700b-4a4b-919c-f1f9ba37e206"
+  ]
+}

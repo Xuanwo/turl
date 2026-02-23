@@ -1,7 +1,9 @@
 use std::fmt;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use serde::Serialize;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum ProviderKind {
     Amp,
     Codex,
@@ -37,7 +39,7 @@ pub struct ResolvedThread {
     pub metadata: ResolutionMeta,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum MessageRole {
     User,
     Assistant,
@@ -56,4 +58,76 @@ impl fmt::Display for MessageRole {
 pub struct ThreadMessage {
     pub role: MessageRole,
     pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SubagentQuery {
+    pub provider: String,
+    pub main_thread_id: String,
+    pub agent_id: Option<String>,
+    pub list: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct SubagentRelation {
+    pub validated: bool,
+    pub evidence: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SubagentLifecycleEvent {
+    pub timestamp: Option<String>,
+    pub event: String,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SubagentExcerptMessage {
+    pub role: MessageRole,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SubagentThreadRef {
+    pub thread_id: String,
+    pub path: Option<String>,
+    pub last_updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SubagentDetailView {
+    pub query: SubagentQuery,
+    pub relation: SubagentRelation,
+    pub lifecycle: Vec<SubagentLifecycleEvent>,
+    pub status: String,
+    pub status_source: String,
+    pub child_thread: Option<SubagentThreadRef>,
+    pub excerpt: Vec<SubagentExcerptMessage>,
+    #[serde(skip_serializing)]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SubagentListItem {
+    pub agent_id: String,
+    pub status: String,
+    pub status_source: String,
+    pub last_update: Option<String>,
+    pub relation: SubagentRelation,
+    pub child_thread: Option<SubagentThreadRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SubagentListView {
+    pub query: SubagentQuery,
+    pub agents: Vec<SubagentListItem>,
+    #[serde(skip_serializing)]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SubagentView {
+    List(SubagentListView),
+    Detail(SubagentDetailView),
 }
