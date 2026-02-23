@@ -1,0 +1,19 @@
+{
+  "name": "@xuanwo/xurl",
+  "version": "0.0.0-dev",
+  "license": "Apache-2.0",
+  "bin": {
+    "xurl": "bin/xurl.js"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=16"
+  },
+  "files": [
+    "bin"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Xuanwo/xurl.git"
+  }
+}

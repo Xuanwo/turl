@@ -1,0 +1,208 @@
+name: Publish npm Package
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  validate-tag:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure tag version matches Cargo version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          cargo_version="$(awk -F '\"' '$1 ~ /^version = / { print $2; exit }' xurl-cli/Cargo.toml)"
+
+          if [[ -z "${cargo_version}" ]]; then
+            echo "Failed to read version from xurl-cli/Cargo.toml"
+            exit 1
+          fi
+
+          if [[ "${tag}" != "${cargo_version}" ]]; then
+            echo "Tag version (${tag}) does not match Cargo version (${cargo_version})."
+            exit 1
+          fi
+
+  build-native:
+    name: Build native binary for ${{ matrix.platform.target }}
+    needs: validate-tag
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary: xurl
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            binary: xurl
+          - os: macos-13
+            target: x86_64-apple-darwin
+            binary: xurl
+          - os: macos-14
+            target: aarch64-apple-darwin
+            binary: xurl
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: xurl.exe
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            binary: xurl.exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        shell: bash
+        run: cargo build --locked --release -p xurl-cli --target ${{ matrix.platform.target }}
+
+      - name: Prepare vendor payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "dist/vendor/${{ matrix.platform.target }}/xurl"
+          cp "target/${{ matrix.platform.target }}/release/${{ matrix.platform.binary }}" \
+             "dist/vendor/${{ matrix.platform.target }}/xurl/${{ matrix.platform.binary }}"
+
+      - name: Upload vendor artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vendor-${{ matrix.platform.target }}
+          path: dist/vendor/${{ matrix.platform.target }}
+          if-no-files-found: error
+
+  stage-npm:
+    name: Stage npm tarballs
+    runs-on: ubuntu-latest
+    needs: build-native
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Download vendor artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/vendor
+          pattern: vendor-*
+          merge-multiple: true
+
+      - name: Stage npm packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          python3 scripts/stage_npm_packages.py \
+            --release-version "${version}" \
+            --vendor-src dist/vendor \
+            --output-dir dist/npm
+          ls -l dist/npm
+
+      - name: Upload npm tarballs
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-tarballs
+          path: dist/npm/*.tgz
+          if-no-files-found: error
+
+  publish-npm:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    needs: stage-npm
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+          scope: "@xuanwo"
+
+      - name: Update npm
+        run: npm install -g npm@latest
+
+      - name: Download npm tarballs
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-tarballs
+          path: dist/npm
+
+      - name: Publish npm tarballs
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${VERSION#v}"
+
+          npm_tag=""
+          tag_prefix=""
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            npm_tag="next"
+            tag_prefix="next-"
+          fi
+
+          publish_one() {
+            tarball="$1"
+            tag="$2"
+
+            publish_cmd=(npm publish "${tarball}")
+            if [[ -n "${tag}" ]]; then
+              publish_cmd+=(--tag "${tag}")
+            fi
+
+            echo "+ ${publish_cmd[*]}"
+            set +e
+            publish_output="$("${publish_cmd[@]}" 2>&1)"
+            publish_status=$?
+            set -e
+            echo "${publish_output}"
+
+            if [[ ${publish_status} -eq 0 ]]; then
+              return
+            fi
+
+            if grep -qiE "previously published|cannot publish over|version already exists" <<< "${publish_output}"; then
+              echo "Skipping already-published tarball: ${tarball}"
+              return
+            fi
+
+            exit "${publish_status}"
+          }
+
+          shopt -s nullglob
+          platform_tarballs=(dist/npm/xurl-npm-linux-*-"${version}".tgz dist/npm/xurl-npm-darwin-*-"${version}".tgz dist/npm/xurl-npm-win32-*-"${version}".tgz)
+          for tarball in "${platform_tarballs[@]}"; do
+            filename="$(basename "${tarball}")"
+            platform="${filename#xurl-npm-}"
+            platform="${platform%-${version}.tgz}"
+            publish_one "${tarball}" "${tag_prefix}${platform}"
+          done
+
+          main_tarball="dist/npm/xurl-npm-${version}.tgz"
+          if [[ ! -f "${main_tarball}" ]]; then
+            echo "Main npm tarball not found: ${main_tarball}"
+            exit 1
+          fi
+          publish_one "${main_tarball}" "${npm_tag}"

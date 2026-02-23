@@ -24,6 +24,21 @@
 
 ## Install
 
+Install from npm and run directly with `npx`:
+
+```bash
+npx @xuanwo/xurl --help
+```
+
+Or install globally via npm:
+
+```bash
+npm install -g @xuanwo/xurl
+xurl --help
+```
+
+Install as a Codex skill:
+
 ```bash
 npx skills add Xuanwo/xurl
 ```

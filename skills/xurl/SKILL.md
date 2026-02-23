@@ -9,7 +9,13 @@ Use this skill when you need to read AI agent thread content by URI.
 
 ## Installation
 
-Install `xurl` from package `xuanwo-xurl` via `uv`:
+Install `xurl` from npm:
+
+```bash
+npx @xuanwo/xurl --help
+```
+
+Or install `xurl` from package `xuanwo-xurl` via `uv`:
 
 ```bash
 uv tool install xuanwo-xurl
