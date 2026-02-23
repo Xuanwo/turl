@@ -25,6 +25,9 @@ npx skills add Xuanwo/turl
 - Supported URIs:
   - `codex://<session_id>`
   - `codex://threads/<session_id>`
+- Resolution order:
+  - SQLite thread index under `CODEX_HOME` (`state_<version>.sqlite` first, then `state.sqlite`) via `threads(id, rollout_path, archived)`.
+  - Filesystem fallback under `sessions/` and `archived_sessions/` for `rollout-*.jsonl`.
 - Examples:
 
 ```bash

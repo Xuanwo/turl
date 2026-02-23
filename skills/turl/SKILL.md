@@ -67,6 +67,7 @@ turl opencode://ses_43a90e3adffejRgrTdlJa48CtE
 - If the user requests exact records, rerun with `--raw`.
 - Return the command output directly.
 - Do not infer or reinterpret thread meaning unless the user explicitly asks for analysis.
+- The output could be long, redirect to temp files and read/grep it later.
 
 ## Failure Handling
 
