@@ -128,6 +128,9 @@ jobs:
     name: Publish to npm
     runs-on: ubuntu-latest
     needs: stage-npm
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/@xuanwo/xurl
     permissions:
       id-token: write
       contents: read
