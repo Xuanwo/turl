@@ -682,7 +682,7 @@ dependencies = [
 
 [[package]]
 name = "turl-cli"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -693,7 +693,7 @@ dependencies = [
 
 [[package]]
 name = "turl-core"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "dirs",
  "once_cell",
