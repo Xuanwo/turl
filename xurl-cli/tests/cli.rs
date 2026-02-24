@@ -227,6 +227,25 @@ fn setup_gemini_subagent_tree() -> tempfile::TempDir {
     temp
 }
 
+fn setup_gemini_subagent_tree_with_ndjson_logs() -> tempfile::TempDir {
+    let temp = setup_gemini_subagent_tree();
+    let project_hash = "0c0d7b04c22749f3687ea60b66949fd32bcea2551d4349bf72346a9ccc9a9ba4";
+    let logs_path = temp
+        .path()
+        .join(format!(".gemini/tmp/{project_hash}/logs.json"));
+    fs::write(
+        &logs_path,
+        format!(
+            r#"{{"sessionId":"{GEMINI_SESSION_ID}","messageId":0,"type":"user","message":"hello main","timestamp":"2026-01-08T11:59:09.195Z"}}
+{{"sessionId":"{GEMINI_MISSING_CHILD_SESSION_ID}","messageId":0,"type":"user","message":"/resume","timestamp":"2026-01-08T12:00:09.195Z"}}
+{{"sessionId":"{GEMINI_CHILD_SESSION_ID}","messageId":0,"type":"user","message":"/resume","timestamp":"2026-01-08T12:11:44.907Z"}}"#
+        ),
+    )
+    .expect("write ndjson logs");
+
+    temp
+}
+
 fn setup_pi_tree() -> tempfile::TempDir {
     let temp = tempdir().expect("tempdir");
     let thread_path = temp.path().join(
@@ -703,6 +722,27 @@ fn gemini_head_outputs_subagent_discovery() {
         .stdout(predicate::str::contains(missing_uri))
         .stdout(predicate::str::contains("status: 'notFound'"))
         .stdout(predicate::str::contains("warnings:"));
+}
+
+#[test]
+fn gemini_head_outputs_subagent_discovery_from_ndjson_logs() {
+    let temp = setup_gemini_subagent_tree_with_ndjson_logs();
+    let main_uri = agents_uri("gemini", GEMINI_SESSION_ID);
+    let child_uri = agents_child_uri("gemini", GEMINI_SESSION_ID, GEMINI_CHILD_SESSION_ID);
+    let missing_uri =
+        agents_child_uri("gemini", GEMINI_SESSION_ID, GEMINI_MISSING_CHILD_SESSION_ID);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("GEMINI_CLI_HOME", temp.path())
+        .arg(main_uri)
+        .arg("--head")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("mode: 'subagent_index'"))
+        .stdout(predicate::str::contains("subagents:"))
+        .stdout(predicate::str::contains(child_uri))
+        .stdout(predicate::str::contains(missing_uri))
+        .stdout(predicate::str::contains("status: 'notFound'"));
 }
 
 #[test]
