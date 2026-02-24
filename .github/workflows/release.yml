@@ -35,23 +35,6 @@ jobs:
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "is_prerelease=${is_prerelease}" >> "${GITHUB_OUTPUT}"
 
-      - name: Ensure tag version matches Cargo version
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="${{ steps.resolve-version.outputs.version }}"
-          cargo_version="$(awk -F '\"' '$1 ~ /^version = / { print $2; exit }' xurl-cli/Cargo.toml)"
-
-          if [[ -z "${cargo_version}" ]]; then
-            echo "Failed to read version from xurl-cli/Cargo.toml"
-            exit 1
-          fi
-
-          if [[ "${tag}" != "${cargo_version}" ]]; then
-            echo "Tag version (${tag}) does not match Cargo version (${cargo_version})."
-            exit 1
-          fi
-
   build-native:
     name: Build native binary for ${{ matrix.platform.target }}
     needs: validate-tag
