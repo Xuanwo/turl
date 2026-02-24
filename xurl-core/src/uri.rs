@@ -4,7 +4,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 
 use crate::error::{Result, XurlError};
-use crate::model::ProviderKind;
+use crate::model::{ProviderKind, ThreadQuery};
 
 static SESSION_ID_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -182,9 +182,112 @@ fn parse_provider(scheme: &str) -> Result<ProviderKind> {
     }
 }
 
+pub fn parse_collection_query_uri(input: &str) -> Result<Option<ThreadQuery>> {
+    let target = if let Some(target) = input.strip_prefix("agents://") {
+        target
+    } else {
+        return Ok(None);
+    };
+
+    let (provider_part, query_raw) = target.split_once('?').map_or((target, ""), |parts| parts);
+    if provider_part.is_empty() || provider_part.contains('/') {
+        return Ok(None);
+    }
+
+    let provider = parse_provider(provider_part)?;
+    let mut q = None::<String>;
+    let mut limit = None::<usize>;
+    let mut ignored_params = Vec::<String>::new();
+
+    for pair in query_raw.split('&').filter(|pair| !pair.is_empty()) {
+        let (raw_key, raw_value) = pair.split_once('=').map_or((pair, ""), |parts| parts);
+        let key = percent_decode_component(raw_key)?;
+        let value = percent_decode_component(raw_value)?;
+
+        match key.as_str() {
+            "q" => {
+                let trimmed = value.trim();
+                if !trimmed.is_empty() {
+                    q = Some(trimmed.to_string());
+                }
+            }
+            "limit" => {
+                limit = Some(value.parse::<usize>().map_err(|_| {
+                    XurlError::InvalidUri(format!("{input} (invalid limit={value})"))
+                })?);
+            }
+            _ => {
+                if !ignored_params.iter().any(|existing| existing == &key) {
+                    ignored_params.push(key);
+                }
+            }
+        }
+    }
+
+    Ok(Some(ThreadQuery {
+        uri: input.to_string(),
+        provider,
+        q,
+        limit: limit.unwrap_or(10),
+        ignored_params,
+    }))
+}
+
+fn percent_decode_component(input: &str) -> Result<String> {
+    let mut output = Vec::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut idx = 0;
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b'+' => {
+                output.push(b' ');
+                idx += 1;
+            }
+            b'%' => {
+                if idx + 2 >= bytes.len() {
+                    return Err(XurlError::InvalidUri(format!(
+                        "invalid percent encoding in query component: {input}"
+                    )));
+                }
+                let h1 = hex_nibble(bytes[idx + 1]).ok_or_else(|| {
+                    XurlError::InvalidUri(format!(
+                        "invalid percent encoding in query component: {input}"
+                    ))
+                })?;
+                let h2 = hex_nibble(bytes[idx + 2]).ok_or_else(|| {
+                    XurlError::InvalidUri(format!(
+                        "invalid percent encoding in query component: {input}"
+                    ))
+                })?;
+                output.push((h1 << 4) | h2);
+                idx += 3;
+            }
+            value => {
+                output.push(value);
+                idx += 1;
+            }
+        }
+    }
+
+    String::from_utf8(output).map_err(|_| {
+        XurlError::InvalidUri(format!(
+            "query component is not valid UTF-8 after percent decoding: {input}"
+        ))
+    })
+}
+
+fn hex_nibble(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ThreadUri;
+    use super::{ThreadUri, parse_collection_query_uri};
     use crate::model::ProviderKind;
 
     #[test]
@@ -423,5 +526,50 @@ mod tests {
         let err = ThreadUri::parse("pi://12cb4c19-2774-4de4-a0d0-9fa32fbae29f/a/b")
             .expect_err("must reject nested path");
         assert!(format!("{err}").contains("invalid uri"));
+    }
+
+    #[test]
+    fn parse_collection_query_uri_with_defaults() {
+        let query =
+            parse_collection_query_uri("agents://codex").expect("collection query parse must work");
+        let query = query.expect("query should be present");
+        assert_eq!(query.provider, ProviderKind::Codex);
+        assert_eq!(query.q, None);
+        assert_eq!(query.limit, 10);
+        assert!(query.ignored_params.is_empty());
+    }
+
+    #[test]
+    fn parse_collection_query_uri_with_q_and_limit() {
+        let query = parse_collection_query_uri("agents://claude?q=spawn+agent&limit=7")
+            .expect("collection query parse must work");
+        let query = query.expect("query should be present");
+        assert_eq!(query.provider, ProviderKind::Claude);
+        assert_eq!(query.q, Some("spawn agent".to_string()));
+        assert_eq!(query.limit, 7);
+    }
+
+    #[test]
+    fn parse_collection_query_uri_ignores_unknown_keys() {
+        let query = parse_collection_query_uri("agents://pi?q=hello&foo=bar&foo=baz")
+            .expect("collection query parse must work");
+        let query = query.expect("query should be present");
+        assert_eq!(query.provider, ProviderKind::Pi);
+        assert_eq!(query.ignored_params, vec!["foo".to_string()]);
+    }
+
+    #[test]
+    fn parse_collection_query_uri_rejects_invalid_limit() {
+        let err = parse_collection_query_uri("agents://gemini?limit=abc")
+            .expect_err("invalid limit should fail");
+        assert!(format!("{err}").contains("invalid uri"));
+    }
+
+    #[test]
+    fn parse_collection_query_uri_is_none_for_thread_uri() {
+        let query =
+            parse_collection_query_uri("agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592")
+                .expect("parsing must succeed");
+        assert_eq!(query, None);
     }
 }
