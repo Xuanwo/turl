@@ -92,6 +92,10 @@ impl PiProvider {
 }
 
 impl Provider for PiProvider {
+    fn kind(&self) -> ProviderKind {
+        ProviderKind::Pi
+    }
+
     fn resolve(&self, session_id: &str) -> Result<ResolvedThread> {
         let sessions_root = self.sessions_root();
         let candidates = Self::find_candidates(&sessions_root, session_id);

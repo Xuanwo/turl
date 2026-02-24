@@ -1,7 +1,8 @@
 use std::cmp::Reverse;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::SystemTime;
 
 use serde::Deserialize;
@@ -9,8 +10,9 @@ use serde_json::Value;
 use walkdir::WalkDir;
 
 use crate::error::{Result, XurlError};
-use crate::model::{ProviderKind, ResolutionMeta, ResolvedThread};
-use crate::provider::Provider;
+use crate::jsonl;
+use crate::model::{ProviderKind, ResolutionMeta, ResolvedThread, WriteRequest, WriteResult};
+use crate::provider::{Provider, WriteEventSink};
 
 #[derive(Debug, Deserialize)]
 struct SessionsIndex {
@@ -172,9 +174,152 @@ impl ClaudeProvider {
             metadata,
         }
     }
+
+    fn claude_bin() -> String {
+        std::env::var("XURL_CLAUDE_BIN").unwrap_or_else(|_| "claude".to_string())
+    }
+
+    fn spawn_claude_command(args: &[&str]) -> Result<std::process::Child> {
+        let bin = Self::claude_bin();
+        Command::new(&bin)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|source| {
+                if source.kind() == std::io::ErrorKind::NotFound {
+                    XurlError::CommandNotFound { command: bin }
+                } else {
+                    XurlError::Io {
+                        path: PathBuf::from(bin),
+                        source,
+                    }
+                }
+            })
+    }
+
+    fn extract_assistant_text(value: &Value) -> Option<String> {
+        let message = value.get("message")?;
+        let content = message.get("content")?.as_array()?;
+        let text = content
+            .iter()
+            .filter_map(|item| {
+                if item.get("type").and_then(Value::as_str) == Some("text") {
+                    item.get("text").and_then(Value::as_str)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        if text.is_empty() { None } else { Some(text) }
+    }
+
+    fn run_write(
+        &self,
+        args: &[&str],
+        req: &WriteRequest,
+        sink: &mut dyn WriteEventSink,
+    ) -> Result<WriteResult> {
+        let mut child = Self::spawn_claude_command(args)?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            XurlError::WriteProtocol("claude stdout pipe is unavailable".to_string())
+        })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            XurlError::WriteProtocol("claude stderr pipe is unavailable".to_string())
+        })?;
+        let stderr_handle = std::thread::spawn(move || {
+            let mut reader = BufReader::new(stderr);
+            let mut content = String::new();
+            let _ = reader.read_to_string(&mut content);
+            content
+        });
+
+        let mut session_id = req.session_id.clone();
+        let mut final_text = None::<String>;
+        let stream_path = Path::new("<claude:stdout>");
+        let reader = BufReader::new(stdout);
+        jsonl::parse_jsonl_reader(stream_path, reader, |_, value| {
+            let Some(event_type) = value.get("type").and_then(Value::as_str) else {
+                return Ok(());
+            };
+
+            match event_type {
+                "system" => {
+                    if value.get("subtype").and_then(Value::as_str) == Some("init")
+                        && let Some(current_session_id) =
+                            value.get("session_id").and_then(Value::as_str)
+                    {
+                        sink.on_session_ready(ProviderKind::Claude, current_session_id)?;
+                        session_id = Some(current_session_id.to_string());
+                    }
+                }
+                "assistant" => {
+                    if let Some(text) = Self::extract_assistant_text(&value) {
+                        sink.on_text_delta(&text)?;
+                        final_text = Some(text);
+                    }
+                    if let Some(current_session_id) =
+                        value.get("session_id").and_then(Value::as_str)
+                    {
+                        session_id = Some(current_session_id.to_string());
+                    }
+                }
+                "result" => {
+                    if let Some(current_session_id) =
+                        value.get("session_id").and_then(Value::as_str)
+                    {
+                        session_id = Some(current_session_id.to_string());
+                    }
+                    if final_text.is_none()
+                        && let Some(text) = value.get("result").and_then(Value::as_str)
+                        && !text.is_empty()
+                    {
+                        sink.on_text_delta(text)?;
+                        final_text = Some(text.to_string());
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        })?;
+
+        let status = child.wait().map_err(|source| XurlError::Io {
+            path: PathBuf::from(Self::claude_bin()),
+            source,
+        })?;
+        let stderr_content = stderr_handle.join().unwrap_or_default();
+
+        if !status.success() {
+            return Err(XurlError::CommandFailed {
+                command: format!("{} {}", Self::claude_bin(), args.join(" ")),
+                code: status.code(),
+                stderr: stderr_content.trim().to_string(),
+            });
+        }
+
+        let session_id = if let Some(session_id) = session_id {
+            session_id
+        } else {
+            return Err(XurlError::WriteProtocol(
+                "missing session id in claude event stream".to_string(),
+            ));
+        };
+
+        Ok(WriteResult {
+            provider: ProviderKind::Claude,
+            session_id,
+            final_text,
+        })
+    }
 }
 
 impl Provider for ClaudeProvider {
+    fn kind(&self) -> ProviderKind {
+        ProviderKind::Claude
+    }
+
     fn resolve(&self, session_id: &str) -> Result<ResolvedThread> {
         let projects = self.projects_root();
 
@@ -213,6 +358,37 @@ impl Provider for ClaudeProvider {
             session_id: session_id.to_string(),
             searched_roots: vec![projects],
         })
+    }
+
+    fn write(&self, req: &WriteRequest, sink: &mut dyn WriteEventSink) -> Result<WriteResult> {
+        let common = ["-p", "--verbose", "--output-format", "stream-json"];
+        if let Some(session_id) = req.session_id.as_deref() {
+            self.run_write(
+                &[
+                    common[0],
+                    common[1],
+                    common[2],
+                    common[3],
+                    "--resume",
+                    session_id,
+                    req.prompt.as_str(),
+                ],
+                req,
+                sink,
+            )
+        } else {
+            self.run_write(
+                &[
+                    common[0],
+                    common[1],
+                    common[2],
+                    common[3],
+                    req.prompt.as_str(),
+                ],
+                req,
+                sink,
+            )
+        }
     }
 }
 

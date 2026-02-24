@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use dirs::home_dir;
 
 use crate::error::{Result, XurlError};
-use crate::model::ResolvedThread;
+use crate::model::{ProviderKind, ResolvedThread, WriteRequest, WriteResult};
 
 pub mod amp;
 pub mod claude;
@@ -13,8 +13,18 @@ pub mod gemini;
 pub mod opencode;
 pub mod pi;
 
+pub trait WriteEventSink {
+    fn on_session_ready(&mut self, provider: ProviderKind, session_id: &str) -> Result<()>;
+    fn on_text_delta(&mut self, text: &str) -> Result<()>;
+}
+
 pub trait Provider {
+    fn kind(&self) -> ProviderKind;
     fn resolve(&self, session_id: &str) -> Result<ResolvedThread>;
+    fn write(&self, req: &WriteRequest, sink: &mut dyn WriteEventSink) -> Result<WriteResult> {
+        let _ = (req, sink);
+        Err(XurlError::UnsupportedProviderWrite(self.kind().to_string()))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

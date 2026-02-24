@@ -41,6 +41,19 @@ pub struct ResolvedThread {
     pub metadata: ResolutionMeta,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WriteRequest {
+    pub prompt: String,
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WriteResult {
+    pub provider: ProviderKind,
+    pub session_id: String,
+    pub final_text: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum MessageRole {
     User,

@@ -1,5 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
+#[cfg(unix)]
+use std::{env, os::unix::fs::PermissionsExt};
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -251,6 +253,26 @@ fn claude_real_subagent_uri() -> String {
 
 fn opencode_real_uri() -> String {
     format!("opencode://{OPENCODE_REAL_SESSION_ID}")
+}
+
+#[cfg(unix)]
+fn setup_mock_bins(entries: &[(&str, &str)]) -> tempfile::TempDir {
+    let temp = tempdir().expect("tempdir");
+    for (name, body) in entries {
+        let path = temp.path().join(name);
+        let script = format!("#!/bin/sh\nset -eu\n{body}\n");
+        fs::write(&path, script).expect("write mock script");
+        let mut perms = fs::metadata(&path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&path, perms).expect("chmod");
+    }
+    temp
+}
+
+#[cfg(unix)]
+fn path_with_mock(mock_root: &std::path::Path) -> String {
+    let current = env::var("PATH").unwrap_or_default();
+    format!("{}:{current}", mock_root.display())
 }
 
 #[test]
@@ -734,4 +756,243 @@ fn opencode_real_fixture_outputs_markdown() {
         .success()
         .stdout(predicate::str::contains("# Thread"))
         .stdout(predicate::str::contains("## 1. User"));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_create_streams_output_and_prints_uri() {
+    let mock = setup_mock_bins(&[(
+        "codex",
+        r#"
+if [ "$1" = "exec" ] && [ "$2" = "--json" ]; then
+  echo '{"type":"thread.started","thread_id":"11111111-1111-4111-8111-111111111111"}'
+  echo '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"hello from create"}}'
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 7
+"#,
+    )]);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg("agents://codex")
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("hello from create"))
+        .stderr(predicate::str::contains(
+            "created: agents://codex/11111111-1111-4111-8111-111111111111",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_append_uses_resume_and_prints_updated_uri() {
+    let mock = setup_mock_bins(&[(
+        "codex",
+        r#"
+if [ "$1" = "exec" ] && [ "$2" = "resume" ] && [ "$3" = "--json" ]; then
+  echo "{\"type\":\"thread.started\",\"thread_id\":\"$4\"}"
+  echo '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"hello from append"}}'
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 7
+"#,
+    )]);
+    let target = "agents://codex/22222222-2222-4222-8222-222222222222";
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg(target)
+        .arg("--data")
+        .arg("continue")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("hello from append"))
+        .stderr(predicate::str::contains(
+            "updated: agents://codex/22222222-2222-4222-8222-222222222222",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_data_file_and_stdin_are_supported() {
+    let mock = setup_mock_bins(&[(
+        "codex",
+        r#"
+if [ "$1" != "exec" ] || [ "$2" != "--json" ]; then
+  echo "unexpected args: $*" >&2
+  exit 7
+fi
+if [ "$3" = "from-file" ]; then
+  echo '{"type":"thread.started","thread_id":"33333333-3333-4333-8333-333333333333"}'
+  echo '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"file-ok"}}'
+  exit 0
+fi
+if [ "$3" = "from-stdin" ]; then
+  echo '{"type":"thread.started","thread_id":"44444444-4444-4444-8444-444444444444"}'
+  echo '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"stdin-ok"}}'
+  exit 0
+fi
+echo "unexpected prompt: $3" >&2
+exit 8
+"#,
+    )]);
+
+    let prompt_file_dir = tempdir().expect("tempdir");
+    let prompt_file = prompt_file_dir.path().join("prompt.txt");
+    fs::write(&prompt_file, "from-file").expect("write prompt");
+
+    let mut from_file = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    from_file
+        .env("PATH", path_with_mock(mock.path()))
+        .arg("agents://codex")
+        .arg("-d")
+        .arg(format!("@{}", prompt_file.display()))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("file-ok"));
+
+    let mut from_stdin = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    from_stdin
+        .env("PATH", path_with_mock(mock.path()))
+        .arg("agents://codex")
+        .arg("-d")
+        .arg("@-")
+        .write_stdin("from-stdin")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("stdin-ok"));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_rejects_head_mode_and_child_uri() {
+    let mock = setup_mock_bins(&[(
+        "codex",
+        r#"
+echo "should not run" >&2
+exit 99
+"#,
+    )]);
+
+    let mut head_cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    head_cmd
+        .env("PATH", path_with_mock(mock.path()))
+        .arg("agents://codex")
+        .arg("-I")
+        .arg("-d")
+        .arg("x")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be combined"));
+
+    let mut child_cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    child_cmd
+        .env("PATH", path_with_mock(mock.path()))
+        .arg(format!("agents://codex/{SESSION_ID}/{SUBAGENT_ID}"))
+        .arg("-d")
+        .arg("x")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "write mode only supports main thread URIs",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_command_not_found_has_hint() {
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", "")
+        .env("XURL_CODEX_BIN", "codex")
+        .arg("agents://codex")
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("hint: write mode needs Codex CLI"));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_unsupported_collection_provider_returns_error() {
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.arg("agents://amp")
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "provider does not support write mode: amp",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_claude_create_stream_json_path_works() {
+    let mock = setup_mock_bins(&[(
+        "claude",
+        r#"
+if [ "$1" = "-p" ] && [ "$2" = "--verbose" ] && [ "$3" = "--output-format" ] && [ "$4" = "stream-json" ]; then
+  echo '{"type":"system","subtype":"init","session_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}'
+  echo '{"type":"assistant","session_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","message":{"content":[{"type":"text","text":"hello from claude"}]}}'
+  echo '{"type":"result","subtype":"success","session_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","result":"hello from claude"}'
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 7
+"#,
+    )]);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg("agents://claude")
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("hello from claude"))
+        .stderr(predicate::str::contains(
+            "created: agents://claude/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_output_flag_writes_assistant_text_to_file() {
+    let mock = setup_mock_bins(&[(
+        "codex",
+        r#"
+if [ "$1" = "exec" ] && [ "$2" = "--json" ]; then
+  echo '{"type":"thread.started","thread_id":"55555555-5555-4555-8555-555555555555"}'
+  echo '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"file target"}}'
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 7
+"#,
+    )]);
+    let output_dir = tempdir().expect("tempdir");
+    let output = output_dir.path().join("write.txt");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg("agents://codex")
+        .arg("-d")
+        .arg("hello")
+        .arg("-o")
+        .arg(&output)
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains(
+            "created: agents://codex/55555555-5555-4555-8555-555555555555",
+        ));
+
+    let written = fs::read_to_string(output).expect("read output");
+    assert_eq!(written, "file target");
 }

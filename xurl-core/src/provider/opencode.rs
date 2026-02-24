@@ -139,6 +139,10 @@ impl OpencodeProvider {
 }
 
 impl Provider for OpencodeProvider {
+    fn kind(&self) -> ProviderKind {
+        ProviderKind::Opencode
+    }
+
     fn resolve(&self, session_id: &str) -> Result<ResolvedThread> {
         let db_path = self.db_path();
         if !db_path.exists() {

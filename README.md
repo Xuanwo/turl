@@ -4,46 +4,12 @@
 
 > Also known as **Xuanwo's URL**.
 
-## Features
+## What xURL Can Do
 
-- Multi-agent thread resolution:
-  - <img src="https://ampcode.com/amp-mark-color.svg" alt="Amp logo" width="16" height="16" /> Amp
-  - <img src="https://avatars.githubusercontent.com/u/14957082?s=24&v=4" alt="Codex logo" width="16" height="16" /> Codex
-  - <img src="https://www.anthropic.com/favicon.ico" alt="Claude logo" width="16" height="16" /> Claude
-  - <img src="https://www.google.com/favicon.ico" alt="Gemini logo" width="16" height="16" /> Gemini
-  - <img src=".github/assets/pi-logo-dark.svg" alt="Pi logo" width="16" height="16" /> Pi
-- <img src="https://opencode.ai/favicon.ico" alt="OpenCode logo" width="16" height="16" /> OpenCode
-- Unified URI scheme: `agents://<provider>/<thread_path>` is the primary format.
-- Default output is markdown with YAML frontmatter header plus provider-specific body.
-- `-I, --head` outputs frontmatter only.
-- `-o, --output <path>` writes rendered output to a file.
-- For Codex/Claude/Pi main URIs, head output includes discovery fields (`subagents` / `entries`) that replace list-mode aggregation.
-- Subagent markdown views print full parent/subagent URIs in `agents://...` format.
-- Non-fatal diagnostics are kept internal; only fatal errors are printed to `stderr`.
-- Automatically respects official environment variables and default local data roots for each supported agent.
-
-## Install
-
-Homebrew:
-
-```bash
-brew tap xuanwo/tap
-brew install xurl
-```
-
-PyPI via `uv`:
-
-```bash
-uv tool install xuanwo-xurl
-xurl --version
-```
-
-npm:
-
-```bash
-npm install -g @xuanwo/xurl
-xurl --version
-```
+- Read an agent conversation as markdown.
+- Discover subagent/branch navigation targets.
+- Start a new conversation with agents.
+- Continue an existing conversation with follow-up prompts.
 
 ## Quick Start
 
@@ -59,162 +25,80 @@ npx skills add Xuanwo/xurl
 Please summarize this thread: agents://codex/xxx_thread
 ```
 
-## Repository Usage
+## Usage
 
-Run `xurl` directly from source:
-
-```bash
-cargo run -p xurl-cli -- --help
-```
-
-Run the test suite:
-
-```bash
-cargo test --workspace
-```
-
-Run CLI integration tests only:
-
-```bash
-cargo test -p xurl-cli --test cli
-```
-
-Release process summary:
-
-1. Bump crate versions in `xurl-core/Cargo.toml` and `xurl-cli/Cargo.toml`.
-2. Push to `main`.
-3. Create and push a tag like `v0.0.14`.
-4. GitHub Actions will publish release assets, npm, PyPI, and Homebrew updates.
-
-## Projects in This Repository
-
-- [`xurl-core`](./xurl-core): core URI parsing, provider resolution, thread reading, and markdown rendering.
-- [`xurl-cli`](./xurl-cli): CLI entrypoint and argument handling for `xurl`.
-- [`npm`](./npm): Node.js wrapper package source for [`@xuanwo/xurl`](https://www.npmjs.com/package/@xuanwo/xurl).
-- [`pyproject.toml`](./pyproject.toml): Python package metadata for [`xuanwo-xurl`](https://pypi.org/project/xuanwo-xurl/).
-- [`homebrew-tap`](https://github.com/Xuanwo/homebrew-tap): Homebrew formula repository (`xuanwo/tap`).
-- [`skills/xurl`](./skills/xurl/SKILL.md): Codex skill instructions for using `xurl`.
-
-## URL Format
-
-Primary URI format:
-
-```text
-agents://<provider>/<thread_path>
-```
-
-ASCII breakdown:
-
-```text
-agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592/019c87fb-38b9-7843-92b1-832f02598495
-^^^^^^   ^^^^^   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-scheme   provider thread_path (provider-specific: main thread, optional child thread)
-```
-
-## Agents
-
-### Amp
-
-- Supported URIs:
-  - `agents://amp/<thread_id>`
-- Thread id format:
-  - `T-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
-- Resolution:
-  - `XDG_DATA_HOME/amp/threads/<thread_id>.json`
-  - fallback: `~/.local/share/amp/threads/<thread_id>.json`
-- Example:
-
-```bash
-xurl agents://amp/T-019c0797-c402-7389-bd80-d785c98df295
-```
-
-### Codex
-
-- Supported URIs:
-  - `agents://codex/<session_id>`
-  - `agents://codex/threads/<session_id>`
-  - `agents://codex/<main_session_id>/<agent_id>`
-- Subagent modes:
-  - Aggregate header only: `xurl -I agents://codex/<main_session_id>`
-  - Drill-down: `xurl agents://codex/<main_session_id>/<agent_id>`
-- Resolution order:
-  - SQLite thread index under `CODEX_HOME` (`state_<version>.sqlite` first, then `state.sqlite`) via `threads(id, rollout_path, archived)`.
-  - Filesystem fallback under `sessions/` and `archived_sessions/` for `rollout-*.jsonl`.
-- Examples:
+Read an agent conversation:
 
 ```bash
 xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
-xurl agents://codex/threads/019c871c-b1f9-7f60-9c4f-87ed09f13592
-xurl -o /tmp/codex-thread.md agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
+```
+
+Discover child targets:
+
+```bash
 xurl -I agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
-xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592/019c87fb-38b9-7843-92b1-832f02598495
-```
-
-### Claude
-
-- Supported URIs:
-  - `agents://claude/<session_id>`
-  - `agents://claude/<main_session_id>/<agent_id>`
-- Subagent modes:
-  - Aggregate header only: `xurl -I agents://claude/<main_session_id>`
-  - Drill-down: `xurl agents://claude/<main_session_id>/<agent_id>`
-- Example:
-
-```bash
-xurl agents://claude/2823d1df-720a-4c31-ac55-ae8ba726721f
 xurl -I agents://claude/2823d1df-720a-4c31-ac55-ae8ba726721f
-xurl agents://claude/2823d1df-720a-4c31-ac55-ae8ba726721f/acompact-69d537
-```
-
-### OpenCode
-
-- Supported URIs:
-  - `agents://opencode/<session_id>`
-- Example:
-
-```bash
-xurl agents://opencode/ses_43a90e3adffejRgrTdlJa48CtE
-```
-
-### Gemini
-
-- Supported URI:
-  - `agents://gemini/<session_id>`
-- Session id format:
-  - `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
-- Resolution:
-  - `GEMINI_CLI_HOME/.gemini/tmp/*/chats/session-*.json`
-  - fallback: `~/.gemini/tmp/*/chats/session-*.json`
-- Example:
-
-```bash
-xurl agents://gemini/29d207db-ca7e-40ba-87f7-e14c9de60613
-```
-
-### Pi
-
-- Supported URIs:
-  - `agents://pi/<session_id>`
-  - `agents://pi/<session_id>/<entry_id>`
-- Session id format:
-  - `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
-- Resolution:
-  - `PI_CODING_AGENT_DIR/sessions/**/*.jsonl`
-  - fallback: `~/.pi/agent/sessions/**/*.jsonl`
-- Rendering:
-  - `agents://pi/<session_id>` renders the latest leaf branch in the session tree.
-  - `agents://pi/<session_id>/<entry_id>` renders the branch ending at the specified entry id.
-  - `xurl -I agents://pi/<session_id>` outputs `entries` in frontmatter for drill-down discovery.
-- Example:
-
-```bash
-xurl agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f
-xurl agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f/d1b2c3d4
 xurl -I agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f
 ```
 
-## Release Automation
+Start a new agent conversation:
 
-- `release.yml` (tag push `v*`) builds native binaries and publishes GitHub release assets (`xurl-<version>-<target>.tar.gz` + checksums + manifest).
-- `homebrew-publish.yml` consumes `release.yml` metadata and updates `xuanwo/tap` formula.
-- `npm-publish.yml` and `pypi-publish.yml` keep their original filenames for trusted publisher compatibility, but now consume artifacts from `release.yml` instead of rebuilding binaries.
+```bash
+xurl agents://codex -d "Draft a migration plan"
+xurl agents://claude -d @prompt.txt
+```
+
+Continue an existing conversation:
+
+```bash
+xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592 -d "Continue"
+cat prompt.md | xurl agents://claude/2823d1df-720a-4c31-ac55-ae8ba726721f -d @-
+```
+
+Save output:
+
+```bash
+xurl -o /tmp/conversation.md agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
+```
+
+## Command Reference
+
+```bash
+xurl [OPTIONS] <URI>
+```
+
+Options:
+
+- `-I, --head`: output frontmatter/discovery info only.
+- `-d, --data <DATA>`: write payload (repeatable).
+- `-o, --output <PATH>`: write command output to file.
+
+`--data` supports:
+
+- text: `-d "hello"`
+- file: `-d @prompt.txt`
+- stdin: `-d @-`
+
+## Providers
+
+| Provider | Query | Create |
+| --- | --- | --- |
+| <img src="https://ampcode.com/amp-mark-color.svg" alt="Amp logo" width="16" height="16" /> Amp | Yes | No |
+| <img src="https://avatars.githubusercontent.com/u/14957082?s=24&v=4" alt="Codex logo" width="16" height="16" /> Codex | Yes | Yes |
+| <img src="https://www.anthropic.com/favicon.ico" alt="Claude logo" width="16" height="16" /> Claude | Yes | Yes |
+| <img src="https://www.google.com/favicon.ico" alt="Gemini logo" width="16" height="16" /> Gemini | Yes | No |
+| <img src=".github/assets/pi-logo-dark.svg" alt="Pi logo" width="16" height="16" /> Pi | Yes | No |
+| <img src="https://opencode.ai/favicon.ico" alt="OpenCode logo" width="16" height="16" /> OpenCode | Yes | No |
+
+## URI Formats
+
+```text
+agents://<provider>/<conversation_target>
+```
+
+For examples:
+
+```text
+agents://codex/<conversation_id>
+agents://claude/<conversation_id>
+```

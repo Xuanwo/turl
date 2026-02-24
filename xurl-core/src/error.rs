@@ -19,6 +19,22 @@ pub enum XurlError {
     #[error("provider does not support subagent queries: {0}")]
     UnsupportedSubagentProvider(String),
 
+    #[error("provider does not support write mode: {0}")]
+    UnsupportedProviderWrite(String),
+
+    #[error("command not found: {command}")]
+    CommandNotFound { command: String },
+
+    #[error("command failed: {command} (exit code: {code:?}): {stderr}")]
+    CommandFailed {
+        command: String,
+        code: Option<i32>,
+        stderr: String,
+    },
+
+    #[error("write protocol error: {0}")]
+    WriteProtocol(String),
+
     #[error("serialization error: {0}")]
     Serialization(String),
 

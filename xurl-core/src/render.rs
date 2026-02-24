@@ -4,6 +4,7 @@ use std::path::Path;
 use serde_json::Value;
 
 use crate::error::{Result, XurlError};
+use crate::jsonl;
 use crate::model::{MessageRole, ProviderKind, ThreadMessage};
 use crate::uri::ThreadUri;
 
@@ -120,13 +121,9 @@ fn extract_timeline_entries(
             continue;
         }
 
-        let value = serde_json::from_str::<Value>(trimmed).map_err(|source| {
-            XurlError::InvalidJsonLine {
-                path: path.to_path_buf(),
-                line: line_no,
-                source,
-            }
-        })?;
+        let Some(value) = jsonl::parse_json_line(path, line_no, trimmed)? else {
+            continue;
+        };
 
         let extracted = match provider {
             ProviderKind::Amp => None,
@@ -165,13 +162,9 @@ fn extract_pi_entries(
             continue;
         }
 
-        let value = serde_json::from_str::<Value>(trimmed).map_err(|source| {
-            XurlError::InvalidJsonLine {
-                path: path.to_path_buf(),
-                line: line_no,
-                source,
-            }
-        })?;
+        let Some(value) = jsonl::parse_json_line(path, line_no, trimmed)? else {
+            continue;
+        };
 
         if value.get("type").and_then(Value::as_str) == Some("session") {
             continue;
