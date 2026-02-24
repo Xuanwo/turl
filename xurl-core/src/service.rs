@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use serde_json::Value;
+use walkdir::WalkDir;
 
 use crate::error::{Result, XurlError};
 use crate::jsonl;
@@ -21,7 +22,7 @@ use crate::provider::opencode::OpencodeProvider;
 use crate::provider::pi::PiProvider;
 use crate::provider::{Provider, ProviderRoots, WriteEventSink};
 use crate::render;
-use crate::uri::ThreadUri;
+use crate::uri::{ThreadUri, is_uuid_session_id};
 
 const STATUS_PENDING_INIT: &str = "pendingInit";
 const STATUS_RUNNING: &str = "running";
@@ -303,7 +304,7 @@ pub fn render_thread_head_markdown(uri: &ThreadUri, roots: &ProviderRoots) -> Re
                 push_yaml_string(
                     &mut output,
                     "subagent_uri",
-                    &agents_thread_uri(uri.provider.as_str(), &uri.session_id, Some(agent_id)),
+                    &agents_thread_uri("pi", &uri.session_id, Some(agent_id)),
                 );
                 push_yaml_string(&mut output, "status", &detail.status);
                 push_yaml_string(&mut output, "status_source", &detail.status_source);
@@ -369,6 +370,7 @@ pub fn resolve_subagent_view(
         ProviderKind::Amp => resolve_amp_subagent_view(uri, roots, list),
         ProviderKind::Codex => resolve_codex_subagent_view(uri, roots, list),
         ProviderKind::Claude => resolve_claude_subagent_view(uri, roots, list),
+        ProviderKind::Gemini => resolve_gemini_subagent_view(uri, roots, list),
         ProviderKind::Pi => resolve_pi_subagent_view(uri, roots, list),
         _ => Err(XurlError::UnsupportedSubagentProvider(
             uri.provider.to_string(),
@@ -1121,7 +1123,6 @@ fn collect_uuid_strings(value: &Value, ids: &mut Vec<String>) {
         _ => {}
     }
 }
-
 
 fn resolve_amp_subagent_view(
     uri: &ThreadUri,
