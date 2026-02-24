@@ -9,6 +9,9 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+
 PACKAGE_NAME = "xuanwo-xurl"
 IMPORT_NAME = "xuanwo_xurl"
 
@@ -63,7 +66,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def render_setup_py(version: str) -> str:
-    return f"""from setuptools import setup
+    return f"""from pathlib import Path
+from setuptools import setup
 from setuptools.dist import Distribution
 
 
@@ -71,16 +75,27 @@ class BinaryDistribution(Distribution):
     def has_ext_modules(self):
         return True
 
+readme_path = Path(__file__).resolve().parent / "README.md"
+long_description = readme_path.read_text(encoding="utf-8") if readme_path.exists() else ""
+
 
 setup(
     name="{PACKAGE_NAME}",
     version="{version}",
     description="Locate and read local code-agent thread files",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
     license="Apache-2.0",
     python_requires=">=3.8",
     packages=["{IMPORT_NAME}"],
     package_data={{"{IMPORT_NAME}": ["bin/*"]}},
     include_package_data=True,
+    url="https://github.com/Xuanwo/xurl",
+    project_urls={{
+        "Homepage": "https://github.com/Xuanwo/xurl",
+        "Repository": "https://github.com/Xuanwo/xurl",
+        "Issues": "https://github.com/Xuanwo/xurl/issues",
+    }},
     entry_points={{"console_scripts": ["xurl={IMPORT_NAME}._runner:main"]}},
     distclass=BinaryDistribution,
 )
@@ -118,6 +133,7 @@ def prepare_stage_dir(
     bin_root.mkdir(parents=True, exist_ok=True)
 
     (stage_dir / "setup.py").write_text(render_setup_py(version), encoding="utf-8")
+    shutil.copy2(REPO_ROOT / "README.md", stage_dir / "README.md")
     (package_root / "__init__.py").write_text(f'__version__ = "{version}"\n', encoding="utf-8")
     (package_root / "_runner.py").write_text(render_runner_py(), encoding="utf-8")
 
