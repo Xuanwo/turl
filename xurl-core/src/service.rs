@@ -218,10 +218,10 @@ pub fn render_thread_head_markdown(uri: &ThreadUri, roots: &ProviderRoots) -> Re
     match (uri.provider, uri.agent_id.as_deref()) {
         (
             ProviderKind::Amp
-                | ProviderKind::Codex
-                | ProviderKind::Claude
-                | ProviderKind::Gemini
-                | ProviderKind::Opencode,
+            | ProviderKind::Codex
+            | ProviderKind::Claude
+            | ProviderKind::Gemini
+            | ProviderKind::Opencode,
             None,
         ) => {
             let resolved_main = resolve_thread(uri, roots)?;
@@ -264,10 +264,10 @@ pub fn render_thread_head_markdown(uri: &ThreadUri, roots: &ProviderRoots) -> Re
         }
         (
             ProviderKind::Amp
-                | ProviderKind::Codex
-                | ProviderKind::Claude
-                | ProviderKind::Gemini
-                | ProviderKind::Opencode,
+            | ProviderKind::Codex
+            | ProviderKind::Claude
+            | ProviderKind::Gemini
+            | ProviderKind::Opencode,
             Some(_),
         ) => {
             let main_uri = main_thread_uri(uri);
@@ -357,16 +357,6 @@ pub fn render_thread_head_markdown(uri: &ThreadUri, roots: &ProviderRoots) -> Re
             );
             push_yaml_string(&mut output, "mode", "pi_entry");
             push_yaml_string(&mut output, "entry_id", entry_id);
-        }
-        _ => {
-            let resolved = resolve_thread(uri, roots)?;
-            push_yaml_string(
-                &mut output,
-                "thread_source",
-                &resolved.path.display().to_string(),
-            );
-            push_yaml_string(&mut output, "mode", "thread");
-            render_warnings(&mut output, &resolved.metadata.warnings);
         }
     }
 
@@ -3141,19 +3131,16 @@ fn inspect_opencode_child(
         }
     };
 
-    let messages = match render::extract_messages(
-        ProviderKind::Opencode,
-        &resolved_child.path,
-        &raw,
-    ) {
-        Ok(messages) => messages,
-        Err(err) => {
-            warnings.push(format!(
+    let messages =
+        match render::extract_messages(ProviderKind::Opencode, &resolved_child.path, &raw) {
+            Ok(messages) => messages,
+            Err(err) => {
+                warnings.push(format!(
                 "failed extracting child transcript messages session_id={child_session_id}: {err}"
             ));
-            Vec::new()
-        }
-    };
+                Vec::new()
+            }
+        };
 
     if message_count == 0 {
         warnings.push(format!(
