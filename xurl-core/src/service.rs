@@ -761,9 +761,7 @@ fn discover_pi_children(
         for hint in record.hints.iter().filter(|hint| {
             hint.kind == PiSessionHintKind::Parent && hint.session_id == main_session_id
         }) {
-            let child = children
-                .entry(record.session_id.clone())
-                .or_insert_with(PiDiscoveredChild::default);
+            let child = children.entry(record.session_id.clone()).or_default();
             child.relation.validated = true;
             child.relation.evidence.push(format!(
                 "{} (from {})",
@@ -788,9 +786,7 @@ fn discover_pi_children(
             .iter()
             .filter(|hint| hint.kind == PiSessionHintKind::Child)
         {
-            let child = children
-                .entry(hint.session_id.clone())
-                .or_insert_with(PiDiscoveredChild::default);
+            let child = children.entry(hint.session_id.clone()).or_default();
             child.relation.validated = true;
             child.relation.evidence.push(format!(
                 "{} (from {})",
@@ -948,9 +944,7 @@ fn parse_pi_session_record(path: &Path, warnings: &mut Vec<String>) -> Option<Pi
         }
     };
 
-    let Some(first_non_empty) = raw.lines().find(|line| !line.trim().is_empty()) else {
-        return None;
-    };
+    let first_non_empty = raw.lines().find(|line| !line.trim().is_empty())?;
 
     let header = match serde_json::from_str::<Value>(first_non_empty) {
         Ok(value) => value,
