@@ -19,6 +19,10 @@ static OPENCODE_SESSION_ID_RE: Lazy<Regex> =
 static PI_SHORT_ENTRY_ID_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)^[0-9a-f]{8}$").expect("valid regex"));
 
+pub fn is_uuid_session_id(input: &str) -> bool {
+    SESSION_ID_RE.is_match(input)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadUri {
     pub provider: ProviderKind,
@@ -116,7 +120,7 @@ impl FromStr for ThreadUri {
             | ProviderKind::Claude
             | ProviderKind::Gemini
             | ProviderKind::Pi
-                if !SESSION_ID_RE.is_match(id) =>
+                if !is_uuid_session_id(id) =>
             {
                 return Err(XurlError::InvalidSessionId(id.to_string()));
             }
@@ -148,8 +152,7 @@ impl FromStr for ThreadUri {
             } else if ((provider == ProviderKind::Codex || provider == ProviderKind::Gemini)
                 && SESSION_ID_RE.is_match(&agent_id))
                 || (provider == ProviderKind::Pi
-                    && (SESSION_ID_RE.is_match(&agent_id)
-                        || PI_SHORT_ENTRY_ID_RE.is_match(&agent_id)))
+                    && (is_uuid_session_id(&agent_id) || PI_SHORT_ENTRY_ID_RE.is_match(&agent_id)))
             {
                 agent_id.to_ascii_lowercase()
             } else {
@@ -397,6 +400,20 @@ mod tests {
         assert_eq!(uri.provider, ProviderKind::Pi);
         assert_eq!(uri.session_id, "12cb4c19-2774-4de4-a0d0-9fa32fbae29f");
         assert_eq!(uri.agent_id, Some("1c130174".to_string()));
+    }
+
+    #[test]
+    fn parse_valid_pi_child_session_uri() {
+        let uri = ThreadUri::parse(
+            "pi://12cb4c19-2774-4de4-a0d0-9fa32fbae29f/72B3A4A8-4F08-40AF-8D7F-8B2C77584E89",
+        )
+        .expect("parse should succeed");
+        assert_eq!(uri.provider, ProviderKind::Pi);
+        assert_eq!(uri.session_id, "12cb4c19-2774-4de4-a0d0-9fa32fbae29f");
+        assert_eq!(
+            uri.agent_id,
+            Some("72b3a4a8-4f08-40af-8d7f-8b2c77584e89".to_string())
+        );
     }
 
     #[test]
