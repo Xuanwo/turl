@@ -3738,7 +3738,7 @@ fn collect_codex_query_candidates(
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl"))
         },
-        |path| extract_codex_rollout_id(path),
+        extract_codex_rollout_id,
         warnings,
     ));
     candidates.extend(collect_simple_file_candidates(
@@ -3749,7 +3749,7 @@ fn collect_codex_query_candidates(
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl"))
         },
-        |path| extract_codex_rollout_id(path),
+        extract_codex_rollout_id,
         warnings,
     ));
     candidates
