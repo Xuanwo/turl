@@ -89,7 +89,8 @@ impl FromStr for ThreadUri {
             | ProviderKind::Codex
             | ProviderKind::Claude
             | ProviderKind::Gemini
-            | ProviderKind::Pi => {
+            | ProviderKind::Pi
+            | ProviderKind::Opencode => {
                 let mut segments = normalized_target.split('/');
                 let main_id = segments.next().unwrap_or_default();
                 let agent_id = segments.next().map(str::to_string);
@@ -103,12 +104,6 @@ impl FromStr for ThreadUri {
                 }
 
                 (main_id, agent_id)
-            }
-            ProviderKind::Opencode => {
-                if normalized_target.contains('/') {
-                    return Err(XurlError::InvalidUri(input.to_string()));
-                }
-                (normalized_target, None)
             }
         };
 
@@ -159,6 +154,13 @@ impl FromStr for ThreadUri {
                 agent_id
             }
         });
+
+        if provider == ProviderKind::Opencode
+            && let Some(child_id) = agent_id.as_deref()
+            && !OPENCODE_SESSION_ID_RE.is_match(child_id)
+        {
+            return Err(XurlError::InvalidSessionId(child_id.to_string()));
+        }
 
         Ok(Self {
             provider,

@@ -5,6 +5,7 @@ use std::{env, os::unix::fs::PermissionsExt};
 
 use assert_cmd::Command;
 use predicates::prelude::*;
+use rusqlite::{Connection, params};
 use tempfile::tempdir;
 
 const SESSION_ID: &str = "019c871c-b1f9-7f60-9c4f-87ed09f13592";
@@ -27,6 +28,9 @@ const CLAUDE_AGENT_ID: &str = "acompact-69d537";
 const CLAUDE_REAL_MAIN_ID: &str = "b90fc33d-33cb-4027-8558-119e2b56c74e";
 const CLAUDE_REAL_AGENT_ID: &str = "a4f21c7";
 const OPENCODE_REAL_SESSION_ID: &str = "ses_7v2md9kx3c1p";
+const OPENCODE_MAIN_SESSION_ID: &str = "ses_5x7md9kx3c1p";
+const OPENCODE_CHILD_SESSION_ID: &str = "ses_5x7md9kx3c2p";
+const OPENCODE_CHILD_EMPTY_SESSION_ID: &str = "ses_5x7md9kx3c3p";
 
 fn setup_codex_tree() -> tempfile::TempDir {
     let temp = tempdir().expect("tempdir");
@@ -330,6 +334,120 @@ fn setup_pi_tree_with_child_sessions() -> tempfile::TempDir {
         ),
     )
     .expect("write child");
+    temp
+}
+
+fn setup_opencode_subagent_tree() -> tempfile::TempDir {
+    let temp = tempdir().expect("tempdir");
+    let opencode_root = temp.path().join("opencode");
+    fs::create_dir_all(&opencode_root).expect("mkdir");
+    let db_path = opencode_root.join("opencode.db");
+
+    let conn = Connection::open(&db_path).expect("open sqlite");
+    conn.execute_batch(
+        "
+        CREATE TABLE session (
+            id TEXT PRIMARY KEY,
+            parent_id TEXT
+        );
+        CREATE TABLE message (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            time_created INTEGER NOT NULL,
+            data TEXT NOT NULL
+        );
+        CREATE TABLE part (
+            id TEXT PRIMARY KEY,
+            message_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            time_created INTEGER NOT NULL,
+            data TEXT NOT NULL
+        );
+        ",
+    )
+    .expect("create schema");
+
+    conn.execute(
+        "INSERT INTO session (id, parent_id) VALUES (?1, NULL)",
+        [OPENCODE_MAIN_SESSION_ID],
+    )
+    .expect("insert main session");
+    conn.execute(
+        "INSERT INTO session (id, parent_id) VALUES (?1, ?2)",
+        params![OPENCODE_CHILD_SESSION_ID, OPENCODE_MAIN_SESSION_ID],
+    )
+    .expect("insert child session");
+    conn.execute(
+        "INSERT INTO session (id, parent_id) VALUES (?1, ?2)",
+        params![OPENCODE_CHILD_EMPTY_SESSION_ID, OPENCODE_MAIN_SESSION_ID],
+    )
+    .expect("insert empty child session");
+
+    conn.execute(
+        "INSERT INTO message (id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4)",
+        params![
+            "main_msg_1",
+            OPENCODE_MAIN_SESSION_ID,
+            1_i64,
+            r#"{"role":"user","time":{"created":1}}"#
+        ],
+    )
+    .expect("insert main user");
+    conn.execute(
+        "INSERT INTO part (id, message_id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            "main_part_1",
+            "main_msg_1",
+            OPENCODE_MAIN_SESSION_ID,
+            1_i64,
+            r#"{"type":"text","text":"main root prompt"}"#
+        ],
+    )
+    .expect("insert main user part");
+
+    conn.execute(
+        "INSERT INTO message (id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4)",
+        params![
+            "child_msg_1",
+            OPENCODE_CHILD_SESSION_ID,
+            2_i64,
+            r#"{"role":"user","time":{"created":2}}"#
+        ],
+    )
+    .expect("insert child user");
+    conn.execute(
+        "INSERT INTO part (id, message_id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            "child_part_1",
+            "child_msg_1",
+            OPENCODE_CHILD_SESSION_ID,
+            2_i64,
+            r#"{"type":"text","text":"child asks for help"}"#
+        ],
+    )
+    .expect("insert child user part");
+
+    conn.execute(
+        "INSERT INTO message (id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4)",
+        params![
+            "child_msg_2",
+            OPENCODE_CHILD_SESSION_ID,
+            3_i64,
+            r#"{"role":"assistant","time":{"created":3,"completed":4}}"#
+        ],
+    )
+    .expect("insert child assistant");
+    conn.execute(
+        "INSERT INTO part (id, message_id, session_id, time_created, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            "child_part_2",
+            "child_msg_2",
+            OPENCODE_CHILD_SESSION_ID,
+            3_i64,
+            r#"{"type":"text","text":"child completed"}"#
+        ],
+    )
+    .expect("insert child assistant part");
 
     temp
 }
@@ -1172,6 +1290,91 @@ fn claude_real_fixture_subagent_detail_outputs_markdown() {
         .success()
         .stdout(predicate::str::contains("# Subagent Thread"))
         .stdout(predicate::str::contains("## Thread Excerpt (Child Thread)"));
+}
+
+#[test]
+fn opencode_subagent_head_includes_subagents_and_warnings() {
+    let temp = setup_opencode_subagent_tree();
+    let child_uri = agents_child_uri(
+        "opencode",
+        OPENCODE_MAIN_SESSION_ID,
+        OPENCODE_CHILD_SESSION_ID,
+    );
+    let empty_child_uri = agents_child_uri(
+        "opencode",
+        OPENCODE_MAIN_SESSION_ID,
+        OPENCODE_CHILD_EMPTY_SESSION_ID,
+    );
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("XDG_DATA_HOME", temp.path())
+        .arg(agents_uri("opencode", OPENCODE_MAIN_SESSION_ID))
+        .arg("--head")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("mode: 'subagent_index'"))
+        .stdout(predicate::str::contains("subagents:"))
+        .stdout(predicate::str::contains(child_uri))
+        .stdout(predicate::str::contains(empty_child_uri))
+        .stdout(predicate::str::contains("status: 'completed'"))
+        .stdout(predicate::str::contains("status: 'pendingInit'"))
+        .stdout(predicate::str::contains("warnings:"))
+        .stdout(predicate::str::contains(format!(
+            "child session_id={OPENCODE_CHILD_EMPTY_SESSION_ID} has no materialized messages in sqlite"
+        )));
+}
+
+#[test]
+fn opencode_subagent_outputs_markdown_view() {
+    let temp = setup_opencode_subagent_tree();
+    let main_uri = agents_uri("opencode", OPENCODE_MAIN_SESSION_ID);
+    let subagent_uri = agents_child_uri(
+        "opencode",
+        OPENCODE_MAIN_SESSION_ID,
+        OPENCODE_CHILD_SESSION_ID,
+    );
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("XDG_DATA_HOME", temp.path())
+        .arg(&subagent_uri)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Subagent Thread"))
+        .stdout(predicate::str::contains(format!(
+            "- Main Thread: `{main_uri}`"
+        )))
+        .stdout(predicate::str::contains(format!(
+            "- Subagent Thread: `{subagent_uri}`"
+        )))
+        .stdout(predicate::str::contains(
+            "- Status: `completed` (`child_rollout`)",
+        ))
+        .stdout(predicate::str::contains(
+            "- Evidence: opencode sqlite relation validated via session.parent_id",
+        ))
+        .stdout(predicate::str::contains("child completed"));
+}
+
+#[test]
+fn opencode_subagent_not_found_outputs_markdown_view() {
+    let temp = setup_opencode_subagent_tree();
+    let missing_child = "ses_5x7md9kx3c9p";
+    let missing_uri = agents_child_uri("opencode", OPENCODE_MAIN_SESSION_ID, missing_child);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("XDG_DATA_HOME", temp.path())
+        .arg(&missing_uri)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Subagent Thread"))
+        .stdout(predicate::str::contains(format!(
+            "- Subagent Thread: `{missing_uri}`"
+        )))
+        .stdout(predicate::str::contains("- Status: `notFound` (`inferred`)"))
+        .stdout(predicate::str::contains("_No child thread messages found._"))
+        .stdout(predicate::str::contains(format!(
+            "agent not found for main_session_id={OPENCODE_MAIN_SESSION_ID} agent_id={missing_child}"
+        )));
 }
 
 #[test]

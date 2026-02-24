@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
 use walkdir::WalkDir;
 
@@ -124,6 +125,23 @@ struct PiDiscoveredChild {
     warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+struct OpencodeAgentRecord {
+    agent_id: String,
+    relation: SubagentRelation,
+    message_count: usize,
+}
+
+#[derive(Debug, Clone)]
+struct OpencodeChildAnalysis {
+    child_thread: Option<SubagentThreadRef>,
+    status: String,
+    status_source: String,
+    last_update: Option<String>,
+    excerpt: Vec<SubagentExcerptMessage>,
+    warnings: Vec<String>,
+}
+
 impl Default for PiDiscoveredChild {
     fn default() -> Self {
         Self {
@@ -199,7 +217,11 @@ pub fn render_thread_head_markdown(uri: &ThreadUri, roots: &ProviderRoots) -> Re
 
     match (uri.provider, uri.agent_id.as_deref()) {
         (
-            ProviderKind::Amp | ProviderKind::Codex | ProviderKind::Claude | ProviderKind::Gemini,
+            ProviderKind::Amp
+            | ProviderKind::Codex
+            | ProviderKind::Claude
+            | ProviderKind::Gemini
+            | ProviderKind::Opencode,
             None,
         ) => {
             let resolved_main = resolve_thread(uri, roots)?;
@@ -241,7 +263,11 @@ pub fn render_thread_head_markdown(uri: &ThreadUri, roots: &ProviderRoots) -> Re
             render_warnings(&mut output, &warnings);
         }
         (
-            ProviderKind::Amp | ProviderKind::Codex | ProviderKind::Claude | ProviderKind::Gemini,
+            ProviderKind::Amp
+            | ProviderKind::Codex
+            | ProviderKind::Claude
+            | ProviderKind::Gemini
+            | ProviderKind::Opencode,
             Some(_),
         ) => {
             let main_uri = main_thread_uri(uri);
@@ -332,16 +358,6 @@ pub fn render_thread_head_markdown(uri: &ThreadUri, roots: &ProviderRoots) -> Re
             push_yaml_string(&mut output, "mode", "pi_entry");
             push_yaml_string(&mut output, "entry_id", entry_id);
         }
-        _ => {
-            let resolved = resolve_thread(uri, roots)?;
-            push_yaml_string(
-                &mut output,
-                "thread_source",
-                &resolved.path.display().to_string(),
-            );
-            push_yaml_string(&mut output, "mode", "thread");
-            render_warnings(&mut output, &resolved.metadata.warnings);
-        }
     }
 
     output.push_str("---\n");
@@ -372,9 +388,7 @@ pub fn resolve_subagent_view(
         ProviderKind::Claude => resolve_claude_subagent_view(uri, roots, list),
         ProviderKind::Gemini => resolve_gemini_subagent_view(uri, roots, list),
         ProviderKind::Pi => resolve_pi_subagent_view(uri, roots, list),
-        _ => Err(XurlError::UnsupportedSubagentProvider(
-            uri.provider.to_string(),
-        )),
+        ProviderKind::Opencode => resolve_opencode_subagent_view(uri, roots, list),
     }
 }
 
@@ -2884,6 +2898,341 @@ fn extract_child_excerpt(
             Vec::new()
         }
     }
+}
+
+fn resolve_opencode_subagent_view(
+    uri: &ThreadUri,
+    roots: &ProviderRoots,
+    list: bool,
+) -> Result<SubagentView> {
+    let main_uri = main_thread_uri(uri);
+    let resolved_main = resolve_thread(&main_uri, roots)?;
+
+    let mut warnings = resolved_main.metadata.warnings.clone();
+    let records = discover_opencode_agents(roots, &uri.session_id, &mut warnings)?;
+
+    if list {
+        let mut agents = Vec::new();
+        for record in records {
+            let analysis = inspect_opencode_child(&record.agent_id, roots, record.message_count);
+            warnings.extend(analysis.warnings);
+
+            agents.push(SubagentListItem {
+                agent_id: record.agent_id.clone(),
+                status: analysis.status,
+                status_source: analysis.status_source,
+                last_update: analysis.last_update.clone(),
+                relation: record.relation,
+                child_thread: analysis.child_thread,
+            });
+        }
+
+        return Ok(SubagentView::List(SubagentListView {
+            query: make_query(uri, None, true),
+            agents,
+            warnings,
+        }));
+    }
+
+    let requested_agent = uri
+        .agent_id
+        .clone()
+        .ok_or_else(|| XurlError::InvalidMode("missing agent id".to_string()))?;
+
+    if let Some(record) = records
+        .into_iter()
+        .find(|record| record.agent_id == requested_agent)
+    {
+        let analysis = inspect_opencode_child(&record.agent_id, roots, record.message_count);
+        warnings.extend(analysis.warnings);
+
+        let lifecycle = vec![SubagentLifecycleEvent {
+            timestamp: analysis.last_update.clone(),
+            event: "session_parent_link".to_string(),
+            detail: "session.parent_id points to main thread".to_string(),
+        }];
+
+        return Ok(SubagentView::Detail(SubagentDetailView {
+            query: make_query(uri, Some(requested_agent), false),
+            relation: record.relation,
+            lifecycle,
+            status: analysis.status,
+            status_source: analysis.status_source,
+            child_thread: analysis.child_thread,
+            excerpt: analysis.excerpt,
+            warnings,
+        }));
+    }
+
+    warnings.push(format!(
+        "agent not found for main_session_id={} agent_id={requested_agent}",
+        uri.session_id
+    ));
+
+    Ok(SubagentView::Detail(SubagentDetailView {
+        query: make_query(uri, Some(requested_agent), false),
+        relation: SubagentRelation::default(),
+        lifecycle: Vec::new(),
+        status: STATUS_NOT_FOUND.to_string(),
+        status_source: "inferred".to_string(),
+        child_thread: None,
+        excerpt: Vec::new(),
+        warnings,
+    }))
+}
+
+fn discover_opencode_agents(
+    roots: &ProviderRoots,
+    main_session_id: &str,
+    warnings: &mut Vec<String>,
+) -> Result<Vec<OpencodeAgentRecord>> {
+    let db_path = opencode_db_path(roots);
+    let conn = open_opencode_read_only_db(&db_path)?;
+
+    let has_parent_id =
+        opencode_session_table_has_parent_id(&conn).map_err(|source| XurlError::Sqlite {
+            path: db_path.clone(),
+            source,
+        })?;
+    if !has_parent_id {
+        warnings.push(
+            "opencode sqlite session table does not expose parent_id; cannot discover subagent relations"
+                .to_string(),
+        );
+        return Ok(Vec::new());
+    }
+
+    let rows =
+        query_opencode_children(&conn, main_session_id).map_err(|source| XurlError::Sqlite {
+            path: db_path,
+            source,
+        })?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(agent_id, message_count)| {
+            let mut relation = SubagentRelation {
+                validated: true,
+                ..SubagentRelation::default()
+            };
+            relation
+                .evidence
+                .push("opencode sqlite relation validated via session.parent_id".to_string());
+
+            OpencodeAgentRecord {
+                agent_id,
+                relation,
+                message_count,
+            }
+        })
+        .collect())
+}
+
+fn query_opencode_children(
+    conn: &Connection,
+    main_session_id: &str,
+) -> std::result::Result<Vec<(String, usize)>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT s.id, COUNT(m.id) AS message_count
+         FROM session AS s
+         LEFT JOIN message AS m ON m.session_id = s.id
+         WHERE s.parent_id = ?1
+         GROUP BY s.id
+         ORDER BY s.id ASC",
+    )?;
+
+    let rows = stmt.query_map([main_session_id], |row| {
+        let id = row.get::<_, String>(0)?;
+        let message_count = row.get::<_, i64>(1)?;
+        Ok((id, usize::try_from(message_count).unwrap_or(0)))
+    })?;
+
+    let mut children = Vec::new();
+    for row in rows {
+        children.push(row?);
+    }
+    Ok(children)
+}
+
+fn opencode_db_path(roots: &ProviderRoots) -> PathBuf {
+    roots.opencode_root.join("opencode.db")
+}
+
+fn open_opencode_read_only_db(db_path: &Path) -> Result<Connection> {
+    Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|source| {
+        XurlError::Sqlite {
+            path: db_path.to_path_buf(),
+            source,
+        }
+    })
+}
+
+fn opencode_session_table_has_parent_id(
+    conn: &Connection,
+) -> std::result::Result<bool, rusqlite::Error> {
+    let mut stmt = conn.prepare("PRAGMA table_info(session)")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+
+    let mut has_parent_id = false;
+    for row in rows {
+        if row? == "parent_id" {
+            has_parent_id = true;
+            break;
+        }
+    }
+    Ok(has_parent_id)
+}
+
+fn inspect_opencode_child(
+    child_session_id: &str,
+    roots: &ProviderRoots,
+    message_count: usize,
+) -> OpencodeChildAnalysis {
+    let mut warnings = Vec::new();
+    let resolved_child = match OpencodeProvider::new(&roots.opencode_root).resolve(child_session_id)
+    {
+        Ok(resolved) => resolved,
+        Err(err) => {
+            warnings.push(format!(
+                "failed to materialize child session_id={child_session_id}: {err}"
+            ));
+            return OpencodeChildAnalysis {
+                child_thread: None,
+                status: STATUS_NOT_FOUND.to_string(),
+                status_source: "inferred".to_string(),
+                last_update: None,
+                excerpt: Vec::new(),
+                warnings,
+            };
+        }
+    };
+
+    let raw = match read_thread_raw(&resolved_child.path) {
+        Ok(raw) => raw,
+        Err(err) => {
+            warnings.push(format!(
+                "failed reading child session transcript session_id={child_session_id}: {err}"
+            ));
+            return OpencodeChildAnalysis {
+                child_thread: Some(SubagentThreadRef {
+                    thread_id: child_session_id.to_string(),
+                    path: Some(resolved_child.path.display().to_string()),
+                    last_updated_at: None,
+                }),
+                status: STATUS_NOT_FOUND.to_string(),
+                status_source: "inferred".to_string(),
+                last_update: None,
+                excerpt: Vec::new(),
+                warnings,
+            };
+        }
+    };
+
+    let messages =
+        match render::extract_messages(ProviderKind::Opencode, &resolved_child.path, &raw) {
+            Ok(messages) => messages,
+            Err(err) => {
+                warnings.push(format!(
+                "failed extracting child transcript messages session_id={child_session_id}: {err}"
+            ));
+                Vec::new()
+            }
+        };
+
+    if message_count == 0 {
+        warnings.push(format!(
+            "child session_id={child_session_id} has no materialized messages in sqlite"
+        ));
+    }
+
+    let (status, status_source) = infer_opencode_status(&messages);
+    let last_update = extract_opencode_last_update(&raw);
+
+    let excerpt = messages
+        .into_iter()
+        .rev()
+        .take(3)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(|message| SubagentExcerptMessage {
+            role: message.role,
+            text: message.text,
+        })
+        .collect::<Vec<_>>();
+
+    OpencodeChildAnalysis {
+        child_thread: Some(SubagentThreadRef {
+            thread_id: child_session_id.to_string(),
+            path: Some(resolved_child.path.display().to_string()),
+            last_updated_at: last_update.clone(),
+        }),
+        status,
+        status_source,
+        last_update,
+        excerpt,
+        warnings,
+    }
+}
+
+fn infer_opencode_status(messages: &[crate::model::ThreadMessage]) -> (String, String) {
+    let has_assistant = messages
+        .iter()
+        .any(|message| message.role == crate::model::MessageRole::Assistant);
+    if has_assistant {
+        return (STATUS_COMPLETED.to_string(), "child_rollout".to_string());
+    }
+
+    let has_user = messages
+        .iter()
+        .any(|message| message.role == crate::model::MessageRole::User);
+    if has_user {
+        return (STATUS_RUNNING.to_string(), "child_rollout".to_string());
+    }
+
+    (STATUS_PENDING_INIT.to_string(), "inferred".to_string())
+}
+
+fn extract_opencode_last_update(raw: &str) -> Option<String> {
+    for line in raw.lines().rev() {
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+
+        if value.get("type").and_then(Value::as_str) != Some("message") {
+            continue;
+        }
+
+        let Some(message) = value.get("message") else {
+            continue;
+        };
+
+        let Some(time) = message.get("time") else {
+            continue;
+        };
+
+        if let Some(completed) = value_to_timestamp_string(time.get("completed")) {
+            return Some(completed);
+        }
+        if let Some(created) = value_to_timestamp_string(time.get("created")) {
+            return Some(created);
+        }
+    }
+
+    None
+}
+
+fn value_to_timestamp_string(value: Option<&Value>) -> Option<String> {
+    let value = value?;
+    value
+        .as_str()
+        .map(ToString::to_string)
+        .or_else(|| value.as_i64().map(|number| number.to_string()))
+        .or_else(|| value.as_u64().map(|number| number.to_string()))
 }
 
 fn discover_claude_agents(

@@ -43,6 +43,7 @@ xurl agents://claude/2823d1df-720a-4c31-ac55-ae8ba726721f/acompact-69d537
 xurl agents://gemini/29d207db-ca7e-40ba-87f7-e14c9de60613
 xurl -I agents://gemini/29d207db-ca7e-40ba-87f7-e14c9de60613
 xurl agents://gemini/29d207db-ca7e-40ba-87f7-e14c9de60613/2b112c8a-d80a-4cff-9c8a-6f3e6fbaf7fb
+xurl -I agents://opencode/ses_43a90e3adffejRgrTdlJa48CtE
 xurl agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f
 xurl agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f/d1b2c3d4
 xurl -I agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f
@@ -56,8 +57,10 @@ xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592/019c87fb-38b9-7843-92b1
 xurl agents://claude/2823d1df-720a-4c31-ac55-ae8ba726721f/acompact-69d537
 xurl agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f/72b3a4a8-4f08-40af-8d7f-8b2c77584e89
 xurl agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f/d1b2c3d4
+xurl agents://opencode/ses_43a90e3adffejRgrTdlJa48CtE/ses_3k2j1h9g8f7d
 ```
 
+OpenCode child linkage is validated via sqlite `session.parent_id`.
 Start a new agent conversation:
 
 ```bash

@@ -900,6 +900,7 @@ dependencies = [
  "assert_cmd",
  "clap",
  "predicates",
+ "rusqlite",
  "tempfile",
  "xurl-core",
 ]
