@@ -16,6 +16,7 @@
 - Unified URI scheme: `agents://<provider>/<thread_path>` is the primary format.
 - Default output is markdown with YAML frontmatter header plus provider-specific body.
 - `-I, --head` outputs frontmatter only.
+- `-o, --output <path>` writes rendered output to a file.
 - For Codex/Claude/Pi main URIs, head output includes discovery fields (`subagents` / `entries`) that replace list-mode aggregation.
 - Subagent markdown views print full parent/subagent URIs in `agents://...` format.
 - Non-fatal diagnostics are kept internal; only fatal errors are printed to `stderr`.
@@ -108,6 +109,7 @@ xurl agents://amp/T-019c0797-c402-7389-bd80-d785c98df295
 ```bash
 xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 xurl agents://codex/threads/019c871c-b1f9-7f60-9c4f-87ed09f13592
+xurl -o /tmp/codex-thread.md agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 xurl -I agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592/019c87fb-38b9-7843-92b1-832f02598495
 ```

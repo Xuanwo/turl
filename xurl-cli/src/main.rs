@@ -1,9 +1,10 @@
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::Parser;
 use xurl_core::{
-    ProviderRoots, ThreadUri, render_subagent_view_markdown, render_thread_head_markdown,
-    render_thread_markdown, resolve_subagent_view, resolve_thread,
+    ProviderRoots, ThreadUri, XurlError, render_subagent_view_markdown,
+    render_thread_head_markdown, render_thread_markdown, resolve_subagent_view, resolve_thread,
 };
 
 #[derive(Debug, Parser)]
@@ -15,6 +16,10 @@ struct Cli {
     /// Output frontmatter only (header mode)
     #[arg(short = 'I', long)]
     head: bool,
+
+    /// Write output to a file instead of stdout
+    #[arg(short = 'o', long = "output", value_name = "PATH")]
+    output: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -30,34 +35,45 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> xurl_core::Result<()> {
+    let Cli { uri, head, output } = cli;
     let roots = ProviderRoots::from_env_or_home()?;
-    let uri = ThreadUri::parse(&cli.uri)?;
+    let uri = ThreadUri::parse(&uri)?;
 
-    if cli.head {
+    let output = output.as_deref();
+
+    if head {
         let head = render_thread_head_markdown(&uri, &roots)?;
-        print!("{head}");
-        return Ok(());
+        return write_output(output, &head);
     }
 
-    let supports_subagent = matches!(
+    let markdown = if matches!(
         uri.provider,
         xurl_core::ProviderKind::Codex | xurl_core::ProviderKind::Claude
-    );
-
-    if supports_subagent && uri.agent_id.is_some() {
+    ) && uri.agent_id.is_some()
+    {
         let head = render_thread_head_markdown(&uri, &roots)?;
         let view = resolve_subagent_view(&uri, &roots, false)?;
         let body = render_subagent_view_markdown(&view);
-        let markdown = format!("{head}\n{body}");
-        print!("{markdown}");
-        return Ok(());
-    }
+        format!("{head}\n{body}")
+    } else {
+        let head = render_thread_head_markdown(&uri, &roots)?;
+        let resolved = resolve_thread(&uri, &roots)?;
+        let body = render_thread_markdown(&uri, &resolved)?;
+        format!("{head}\n{body}")
+    };
 
-    let head = render_thread_head_markdown(&uri, &roots)?;
-    let resolved = resolve_thread(&uri, &roots)?;
-    let body = render_thread_markdown(&uri, &resolved)?;
-    let markdown = format!("{head}\n{body}");
-    print!("{markdown}");
+    write_output(output, &markdown)
+}
+
+fn write_output(path: Option<&Path>, content: &str) -> xurl_core::Result<()> {
+    if let Some(path) = path {
+        std::fs::write(path, content).map_err(|source| XurlError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    } else {
+        print!("{content}");
+    }
 
     Ok(())
 }
