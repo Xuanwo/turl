@@ -273,6 +273,45 @@ fn default_outputs_markdown() {
 }
 
 #[test]
+fn output_flag_writes_markdown_to_file() {
+    let temp = setup_codex_tree();
+    let output_dir = tempdir().expect("tempdir");
+    let output_path = output_dir.path().join("thread.md");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .env("CLAUDE_CONFIG_DIR", temp.path().join("missing-claude"))
+        .arg(codex_uri())
+        .arg("-o")
+        .arg(&output_path)
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty());
+
+    let written = fs::read_to_string(output_path).expect("read output");
+    assert!(written.contains("---\n"));
+    assert!(written.contains("# Thread"));
+    assert!(written.contains("hello"));
+}
+
+#[test]
+fn output_flag_returns_error_when_parent_directory_missing() {
+    let temp = setup_codex_tree();
+    let missing_parent = temp.path().join("missing-parent");
+    let output_path = missing_parent.join("thread.md");
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .env("CLAUDE_CONFIG_DIR", temp.path().join("missing-claude"))
+        .arg(codex_uri())
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("error: i/o error on"));
+}
+
+#[test]
 fn agents_uri_outputs_markdown() {
     let temp = setup_codex_tree();
 

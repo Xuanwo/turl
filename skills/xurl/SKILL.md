@@ -97,6 +97,7 @@ Release binaries are published by `release.yml`; `homebrew-publish.yml` updates 
 
 3. Validate mode constraints.
 - `--head` can be used with both main and child URIs.
+- `-o/--output <path>` writes the rendered content to a file instead of stdout.
 - `amp`, `gemini`, and `opencode` do not support child path segments.
 
 4. If child id is unknown, discover first.
@@ -152,6 +153,12 @@ Default output (timeline markdown with frontmatter and timeline entries):
 
 ```bash
 xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
+```
+
+Write output to a file:
+
+```bash
+xurl -o /tmp/codex-thread.md agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 ```
 
 Frontmatter includes machine-readable source metadata:
@@ -227,6 +234,7 @@ xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592/019c87fb-38b9-7843-92b1
 - Prefer canonical `agents://` URIs when constructing links or commands.
 - Legacy provider schemes are accepted, so keep workflows compatible with existing links.
 - Use default markdown output and read frontmatter (`thread_source`) when raw file access is needed.
+- Use `-o/--output` when the user asks to persist rendered output to a specific file path.
 - If the user asks for subagent aggregation, use `-I/--head` with the parent thread URI and read `subagents`.
 - If the user asks for Pi session navigation targets, use `-I/--head` with `agents://pi/<session_id>` and read `entries`.
 - If the user requests exact records, read the `thread_source` path from frontmatter.
