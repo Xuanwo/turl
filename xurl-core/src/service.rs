@@ -1594,14 +1594,11 @@ fn parse_gemini_log_entry(
         return None;
     };
 
-    let Some(session_id) = object
+    let session_id = object
         .get("sessionId")
         .and_then(Value::as_str)
         .or_else(|| object.get("session_id").and_then(Value::as_str))
-        .and_then(parse_session_id_like)
-    else {
-        return None;
-    };
+        .and_then(parse_session_id_like)?;
 
     Some(GeminiLogEntry {
         session_id,
