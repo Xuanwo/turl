@@ -3141,16 +3141,19 @@ fn inspect_opencode_child(
         }
     };
 
-    let messages =
-        match render::extract_messages(ProviderKind::Opencode, &resolved_child.path, &raw) {
-            Ok(messages) => messages,
-            Err(err) => {
-                warnings.push(format!(
-                    "failed extracting child transcript messages session_id={child_session_id}: {err}"
-                ));
-                Vec::new()
-            }
-        };
+    let messages = match render::extract_messages(
+        ProviderKind::Opencode,
+        &resolved_child.path,
+        &raw,
+    ) {
+        Ok(messages) => messages,
+        Err(err) => {
+            warnings.push(format!(
+                "failed extracting child transcript messages session_id={child_session_id}: {err}"
+            ));
+            Vec::new()
+        }
+    };
 
     if message_count == 0 {
         warnings.push(format!(
