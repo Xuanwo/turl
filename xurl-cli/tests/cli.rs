@@ -13,6 +13,8 @@ const REAL_FIXTURE_MAIN_ID: &str = "55fe4488-c6bd-46fa-9390-dab3b8860b95";
 const REAL_FIXTURE_AGENT_ID: &str = "29bf19c3-b83e-401d-8f38-5660b7f67152";
 const AMP_SESSION_ID: &str = "T-019c0797-c402-7389-bd80-d785c98df295";
 const GEMINI_SESSION_ID: &str = "29d207db-ca7e-40ba-87f7-e14c9de60613";
+const GEMINI_CHILD_SESSION_ID: &str = "2b112c8a-d80a-4cff-9c8a-6f3e6fbaf7fb";
+const GEMINI_MISSING_CHILD_SESSION_ID: &str = "62f9f98d-c578-4d3a-b4bf-3aaed19889d6";
 const GEMINI_REAL_SESSION_ID: &str = "da2ab190-85f8-4d5c-bcce-8292921a33bf";
 const PI_SESSION_ID: &str = "12cb4c19-2774-4de4-a0d0-9fa32fbae29f";
 const PI_ENTRY_ID: &str = "d1b2c3d4";
@@ -147,6 +149,84 @@ fn setup_gemini_tree() -> tempfile::TempDir {
     temp
 }
 
+fn setup_gemini_subagent_tree() -> tempfile::TempDir {
+    let temp = tempdir().expect("tempdir");
+    let project_hash = "0c0d7b04c22749f3687ea60b66949fd32bcea2551d4349bf72346a9ccc9a9ba4";
+    let project_root = temp.path().join(format!(".gemini/tmp/{project_hash}"));
+    let chats_dir = project_root.join("chats");
+    fs::create_dir_all(&chats_dir).expect("mkdir chats");
+
+    let main_chat_path = chats_dir.join("session-2026-01-08T11-55-main.json");
+    fs::write(
+        &main_chat_path,
+        format!(
+            r#"{{
+  "sessionId": "{GEMINI_SESSION_ID}",
+  "projectHash": "{project_hash}",
+  "startTime": "2026-01-08T11:55:12.379Z",
+  "lastUpdated": "2026-01-08T12:31:14.881Z",
+  "messages": [
+    {{ "type": "user", "content": "hello main" }},
+    {{ "type": "gemini", "content": "main done" }}
+  ]
+}}"#
+        ),
+    )
+    .expect("write main chat");
+
+    let child_chat_path = chats_dir.join("session-2026-01-08T12-12-child.json");
+    fs::write(
+        &child_chat_path,
+        format!(
+            r#"{{
+  "sessionId": "{GEMINI_CHILD_SESSION_ID}",
+  "parentSessionId": "{GEMINI_SESSION_ID}",
+  "projectHash": "{project_hash}",
+  "startTime": "2026-01-08T12:12:00.000Z",
+  "lastUpdated": "2026-01-08T12:20:00.000Z",
+  "messages": [
+    {{ "type": "user", "content": "/resume" }},
+    {{ "type": "gemini", "content": "child done" }}
+  ]
+}}"#
+        ),
+    )
+    .expect("write child chat");
+
+    let logs_path = project_root.join("logs.json");
+    fs::write(
+        &logs_path,
+        format!(
+            r#"[
+  {{
+    "sessionId": "{GEMINI_SESSION_ID}",
+    "messageId": 0,
+    "type": "user",
+    "message": "hello main",
+    "timestamp": "2026-01-08T11:59:09.195Z"
+  }},
+  {{
+    "sessionId": "{GEMINI_MISSING_CHILD_SESSION_ID}",
+    "messageId": 0,
+    "type": "user",
+    "message": "/resume",
+    "timestamp": "2026-01-08T12:00:09.195Z"
+  }},
+  {{
+    "sessionId": "{GEMINI_CHILD_SESSION_ID}",
+    "messageId": 0,
+    "type": "user",
+    "message": "/resume",
+    "timestamp": "2026-01-08T12:11:44.907Z"
+  }}
+]"#
+        ),
+    )
+    .expect("write logs");
+
+    temp
+}
+
 fn setup_pi_tree() -> tempfile::TempDir {
     let temp = tempdir().expect("tempdir");
     let thread_path = temp.path().join(
@@ -225,6 +305,14 @@ fn agents_child_uri(provider: &str, session_id: &str, child_id: &str) -> String 
 
 fn gemini_uri() -> String {
     format!("gemini://{GEMINI_SESSION_ID}")
+}
+
+fn agents_gemini_subagent_uri() -> String {
+    format!("agents://gemini/{GEMINI_SESSION_ID}/{GEMINI_CHILD_SESSION_ID}")
+}
+
+fn gemini_missing_subagent_uri() -> String {
+    format!("gemini://{GEMINI_SESSION_ID}/{GEMINI_MISSING_CHILD_SESSION_ID}")
 }
 
 fn gemini_real_uri() -> String {
@@ -593,6 +681,67 @@ fn gemini_outputs_markdown() {
         .stdout(predicate::str::contains("## 1. User"))
         .stdout(predicate::str::contains("hello"))
         .stdout(predicate::str::contains("world"));
+}
+
+#[test]
+fn gemini_head_outputs_subagent_discovery() {
+    let temp = setup_gemini_subagent_tree();
+    let main_uri = agents_uri("gemini", GEMINI_SESSION_ID);
+    let child_uri = agents_child_uri("gemini", GEMINI_SESSION_ID, GEMINI_CHILD_SESSION_ID);
+    let missing_uri =
+        agents_child_uri("gemini", GEMINI_SESSION_ID, GEMINI_MISSING_CHILD_SESSION_ID);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("GEMINI_CLI_HOME", temp.path())
+        .arg(main_uri)
+        .arg("--head")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("mode: 'subagent_index'"))
+        .stdout(predicate::str::contains("subagents:"))
+        .stdout(predicate::str::contains(child_uri))
+        .stdout(predicate::str::contains(missing_uri))
+        .stdout(predicate::str::contains("status: 'notFound'"))
+        .stdout(predicate::str::contains("warnings:"));
+}
+
+#[test]
+fn gemini_subagent_outputs_markdown_view() {
+    let temp = setup_gemini_subagent_tree();
+    let main_uri = agents_uri("gemini", GEMINI_SESSION_ID);
+    let subagent_uri = agents_child_uri("gemini", GEMINI_SESSION_ID, GEMINI_CHILD_SESSION_ID);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("GEMINI_CLI_HOME", temp.path())
+        .arg(agents_gemini_subagent_uri())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Subagent Thread"))
+        .stdout(predicate::str::contains(format!(
+            "- Main Thread: `{main_uri}`"
+        )))
+        .stdout(predicate::str::contains(format!(
+            "- Subagent Thread: `{subagent_uri}`"
+        )))
+        .stdout(predicate::str::contains("## Thread Excerpt (Child Thread)"));
+}
+
+#[test]
+fn gemini_missing_subagent_outputs_not_found_markdown() {
+    let temp = setup_gemini_subagent_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("GEMINI_CLI_HOME", temp.path())
+        .arg(gemini_missing_subagent_uri())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Subagent Thread"))
+        .stdout(predicate::str::contains(
+            "- Status: `notFound` (`inferred`)",
+        ))
+        .stdout(predicate::str::contains(
+            "_No child thread messages found._",
+        ));
 }
 
 #[test]

@@ -81,7 +81,10 @@ impl FromStr for ThreadUri {
         };
 
         let (id, agent_id) = match provider {
-            ProviderKind::Codex | ProviderKind::Claude | ProviderKind::Pi => {
+            ProviderKind::Codex
+            | ProviderKind::Claude
+            | ProviderKind::Gemini
+            | ProviderKind::Pi => {
                 let mut segments = normalized_target.split('/');
                 let main_id = segments.next().unwrap_or_default();
                 let agent_id = segments.next().map(str::to_string);
@@ -96,7 +99,7 @@ impl FromStr for ThreadUri {
 
                 (main_id, agent_id)
             }
-            ProviderKind::Amp | ProviderKind::Gemini | ProviderKind::Opencode => {
+            ProviderKind::Amp | ProviderKind::Opencode => {
                 if normalized_target.contains('/') {
                     return Err(XurlError::InvalidUri(input.to_string()));
                 }
@@ -132,7 +135,8 @@ impl FromStr for ThreadUri {
         };
 
         let agent_id = agent_id.map(|agent_id| {
-            if (provider == ProviderKind::Codex && SESSION_ID_RE.is_match(&agent_id))
+            if ((provider == ProviderKind::Codex || provider == ProviderKind::Gemini)
+                && SESSION_ID_RE.is_match(&agent_id))
                 || (provider == ProviderKind::Pi
                     && (SESSION_ID_RE.is_match(&agent_id)
                         || PI_SHORT_ENTRY_ID_RE.is_match(&agent_id)))
@@ -300,6 +304,34 @@ mod tests {
         assert_eq!(uri.provider, ProviderKind::Gemini);
         assert_eq!(uri.session_id, "29d207db-ca7e-40ba-87f7-e14c9de60613");
         assert_eq!(uri.agent_id, None);
+    }
+
+    #[test]
+    fn parse_gemini_subagent_uri() {
+        let uri = ThreadUri::parse(
+            "gemini://29d207db-ca7e-40ba-87f7-e14c9de60613/2B112C8A-D80A-4CFF-9C8A-6F3E6FBAF7FB",
+        )
+        .expect("parse should succeed");
+        assert_eq!(uri.provider, ProviderKind::Gemini);
+        assert_eq!(uri.session_id, "29d207db-ca7e-40ba-87f7-e14c9de60613");
+        assert_eq!(
+            uri.agent_id,
+            Some("2b112c8a-d80a-4cff-9c8a-6f3e6fbaf7fb".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_agents_gemini_subagent_uri() {
+        let uri = ThreadUri::parse(
+            "agents://gemini/29d207db-ca7e-40ba-87f7-e14c9de60613/2b112c8a-d80a-4cff-9c8a-6f3e6fbaf7fb",
+        )
+        .expect("parse should succeed");
+        assert_eq!(uri.provider, ProviderKind::Gemini);
+        assert_eq!(uri.session_id, "29d207db-ca7e-40ba-87f7-e14c9de60613");
+        assert_eq!(
+            uri.agent_id,
+            Some("2b112c8a-d80a-4cff-9c8a-6f3e6fbaf7fb".to_string())
+        );
     }
 
     #[test]

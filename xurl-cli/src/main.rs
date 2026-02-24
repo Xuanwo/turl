@@ -60,7 +60,9 @@ fn run(cli: Cli) -> xurl_core::Result<()> {
 
         let markdown = if matches!(
             uri.provider,
-            xurl_core::ProviderKind::Codex | xurl_core::ProviderKind::Claude
+            xurl_core::ProviderKind::Codex
+                | xurl_core::ProviderKind::Claude
+                | xurl_core::ProviderKind::Gemini
         ) && uri.agent_id.is_some()
         {
             let head = render_thread_head_markdown(&uri, &roots)?;

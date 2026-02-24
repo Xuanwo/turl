@@ -38,6 +38,12 @@ Discover child targets:
 ```bash
 xurl -I agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 xurl -I agents://claude/2823d1df-720a-4c31-ac55-ae8ba726721f
+xurl agents://claude/2823d1df-720a-4c31-ac55-ae8ba726721f/acompact-69d537
+xurl agents://gemini/29d207db-ca7e-40ba-87f7-e14c9de60613
+xurl -I agents://gemini/29d207db-ca7e-40ba-87f7-e14c9de60613
+xurl agents://gemini/29d207db-ca7e-40ba-87f7-e14c9de60613/2b112c8a-d80a-4cff-9c8a-6f3e6fbaf7fb
+xurl agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f
+xurl agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f/d1b2c3d4
 xurl -I agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f
 ```
 

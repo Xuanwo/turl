@@ -75,12 +75,17 @@ xurl --version
 
 ```bash
 xurl agents://codex/<conversation_id>
+xurl agents://claude/<conversation_id>
+xurl agents://gemini/<conversation_id>
 ```
 
 ### 2) Discover
 
 ```bash
 xurl -I agents://codex/<conversation_id>
+xurl -I agents://claude/<conversation_id>
+xurl -I agents://gemini/<conversation_id>
+xurl -I agents://pi/<session_id>
 ```
 
 Use returned `subagents` or `entries` URI for next step.
@@ -128,13 +133,33 @@ Write output:
 
 ## URI Formats
 
-```text
-agents://<provider>/<conversation_target>
-```
+Canonical:
+
+- `agents://codex/<session_id>`
+- `agents://codex/threads/<session_id>`
+- `agents://codex/<main_session_id>/<agent_id>`
+- `agents://amp/<thread_id>`
+- `agents://claude/<session_id>`
+- `agents://claude/<main_session_id>/<agent_id>`
+- `agents://gemini/<session_id>`
+- `agents://gemini/<main_session_id>/<child_session_id>`
+- `agents://pi/<session_id>`
+- `agents://pi/<session_id>/<entry_id>`
+- `agents://opencode/<session_id>`
 
 Legacy compatibility:
 
-- `codex://...`, `claude://...`, `amp://...`, `gemini://...`, `pi://...`, `opencode://...`
+- `codex://<session_id>`
+- `codex://threads/<session_id>`
+- `codex://<main_session_id>/<agent_id>`
+- `amp://<thread_id>`
+- `claude://<session_id>`
+- `claude://<main_session_id>/<agent_id>`
+- `gemini://<session_id>`
+- `gemini://<main_session_id>/<child_session_id>`
+- `pi://<session_id>`
+- `pi://<session_id>/<entry_id>`
+- `opencode://<session_id>`
 
 ## Failure Handling
 

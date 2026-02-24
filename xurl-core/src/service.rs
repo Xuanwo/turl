@@ -50,6 +50,30 @@ struct ClaudeAgentRecord {
     warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+struct GeminiChatRecord {
+    session_id: String,
+    path: PathBuf,
+    last_update: Option<String>,
+    status: String,
+    explicit_parent_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct GeminiLogEntry {
+    session_id: String,
+    message: Option<String>,
+    timestamp: Option<String>,
+    entry_type: Option<String>,
+    explicit_parent_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct GeminiChildRecord {
+    relation: SubagentRelation,
+    relation_timestamp: Option<String>,
+}
+
 pub fn resolve_thread(uri: &ThreadUri, roots: &ProviderRoots) -> Result<ResolvedThread> {
     match uri.provider {
         ProviderKind::Amp => AmpProvider::new(&roots.amp_root).resolve(&uri.session_id),
@@ -110,7 +134,7 @@ pub fn render_thread_head_markdown(uri: &ThreadUri, roots: &ProviderRoots) -> Re
     push_yaml_string(&mut output, "session_id", &uri.session_id);
 
     match (uri.provider, uri.agent_id.as_deref()) {
-        (ProviderKind::Codex | ProviderKind::Claude, None) => {
+        (ProviderKind::Codex | ProviderKind::Claude | ProviderKind::Gemini, None) => {
             let resolved_main = resolve_thread(uri, roots)?;
             push_yaml_string(
                 &mut output,
@@ -142,7 +166,7 @@ pub fn render_thread_head_markdown(uri: &ThreadUri, roots: &ProviderRoots) -> Re
             render_pi_entries_head(&mut output, &list);
             render_warnings(&mut output, &list.warnings);
         }
-        (ProviderKind::Codex | ProviderKind::Claude, Some(_)) => {
+        (ProviderKind::Codex | ProviderKind::Claude | ProviderKind::Gemini, Some(_)) => {
             let main_uri = main_thread_uri(uri);
             let resolved_main = resolve_thread(&main_uri, roots)?;
 
@@ -232,6 +256,7 @@ pub fn resolve_subagent_view(
     match uri.provider {
         ProviderKind::Codex => resolve_codex_subagent_view(uri, roots, list),
         ProviderKind::Claude => resolve_claude_subagent_view(uri, roots, list),
+        ProviderKind::Gemini => resolve_gemini_subagent_view(uri, roots, list),
         _ => Err(XurlError::UnsupportedSubagentProvider(
             uri.provider.to_string(),
         )),
@@ -1105,6 +1130,683 @@ fn resolve_claude_subagent_view(
         excerpt: Vec::new(),
         warnings,
     }))
+}
+
+fn resolve_gemini_subagent_view(
+    uri: &ThreadUri,
+    roots: &ProviderRoots,
+    list: bool,
+) -> Result<SubagentView> {
+    let main_uri = main_thread_uri(uri);
+    let resolved_main = resolve_thread(&main_uri, roots)?;
+    let mut warnings = resolved_main.metadata.warnings.clone();
+
+    let (chats, mut children) =
+        discover_gemini_children(&resolved_main, &uri.session_id, &mut warnings);
+
+    if list {
+        let agents = children
+            .iter_mut()
+            .map(|(child_session_id, record)| {
+                if let Some(chat) = chats.get(child_session_id) {
+                    return SubagentListItem {
+                        agent_id: child_session_id.clone(),
+                        status: chat.status.clone(),
+                        status_source: "child_rollout".to_string(),
+                        last_update: chat.last_update.clone(),
+                        relation: record.relation.clone(),
+                        child_thread: Some(SubagentThreadRef {
+                            thread_id: child_session_id.clone(),
+                            path: Some(chat.path.display().to_string()),
+                            last_updated_at: chat.last_update.clone(),
+                        }),
+                    };
+                }
+
+                let missing_warning = format!(
+                    "child session {child_session_id} discovered from local Gemini data but chat file was not found in project chats"
+                );
+                warnings.push(missing_warning);
+                let missing_evidence =
+                    "child session could not be materialized to a chat file".to_string();
+                if !record.relation.evidence.contains(&missing_evidence) {
+                    record.relation.evidence.push(missing_evidence);
+                }
+
+                SubagentListItem {
+                    agent_id: child_session_id.clone(),
+                    status: STATUS_NOT_FOUND.to_string(),
+                    status_source: "inferred".to_string(),
+                    last_update: record.relation_timestamp.clone(),
+                    relation: record.relation.clone(),
+                    child_thread: None,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        return Ok(SubagentView::List(SubagentListView {
+            query: make_query(uri, None, true),
+            agents,
+            warnings,
+        }));
+    }
+
+    let requested_child = uri
+        .agent_id
+        .clone()
+        .ok_or_else(|| XurlError::InvalidMode("missing agent id".to_string()))?;
+
+    let mut relation = SubagentRelation::default();
+    let mut lifecycle = Vec::new();
+    let mut status = STATUS_NOT_FOUND.to_string();
+    let mut status_source = "inferred".to_string();
+    let mut child_thread = None;
+    let mut excerpt = Vec::new();
+
+    if let Some(record) = children.get_mut(&requested_child) {
+        relation = record.relation.clone();
+        if !relation.evidence.is_empty() {
+            lifecycle.push(SubagentLifecycleEvent {
+                timestamp: record.relation_timestamp.clone(),
+                event: "discover_child".to_string(),
+                detail: if relation.validated {
+                    "child relation validated from local Gemini payload".to_string()
+                } else {
+                    "child relation inferred from logs.json /resume sequence".to_string()
+                },
+            });
+        }
+
+        if let Some(chat) = chats.get(&requested_child) {
+            status = chat.status.clone();
+            status_source = "child_rollout".to_string();
+            child_thread = Some(SubagentThreadRef {
+                thread_id: requested_child.clone(),
+                path: Some(chat.path.display().to_string()),
+                last_updated_at: chat.last_update.clone(),
+            });
+            excerpt = extract_child_excerpt(ProviderKind::Gemini, &chat.path, &mut warnings);
+        } else {
+            warnings.push(format!(
+                "child session {requested_child} discovered from local Gemini data but chat file was not found in project chats"
+            ));
+            let missing_evidence =
+                "child session could not be materialized to a chat file".to_string();
+            if !relation.evidence.contains(&missing_evidence) {
+                relation.evidence.push(missing_evidence);
+            }
+        }
+    } else if let Some(chat) = chats.get(&requested_child) {
+        warnings.push(format!(
+            "unable to validate Gemini parent-child relation for main_session_id={} child_session_id={requested_child}",
+            uri.session_id
+        ));
+        lifecycle.push(SubagentLifecycleEvent {
+            timestamp: chat.last_update.clone(),
+            event: "discover_child_chat".to_string(),
+            detail: "child chat exists but relation to main thread is unknown".to_string(),
+        });
+        status = chat.status.clone();
+        status_source = "child_rollout".to_string();
+        child_thread = Some(SubagentThreadRef {
+            thread_id: requested_child.clone(),
+            path: Some(chat.path.display().to_string()),
+            last_updated_at: chat.last_update.clone(),
+        });
+        excerpt = extract_child_excerpt(ProviderKind::Gemini, &chat.path, &mut warnings);
+    } else {
+        warnings.push(format!(
+            "child session not found for main_session_id={} child_session_id={requested_child}",
+            uri.session_id
+        ));
+    }
+
+    Ok(SubagentView::Detail(SubagentDetailView {
+        query: make_query(uri, Some(requested_child), false),
+        relation,
+        lifecycle,
+        status,
+        status_source,
+        child_thread,
+        excerpt,
+        warnings,
+    }))
+}
+
+fn discover_gemini_children(
+    resolved_main: &ResolvedThread,
+    main_session_id: &str,
+    warnings: &mut Vec<String>,
+) -> (
+    BTreeMap<String, GeminiChatRecord>,
+    BTreeMap<String, GeminiChildRecord>,
+) {
+    let Some(project_dir) = resolved_main.path.parent().and_then(Path::parent) else {
+        warnings.push(format!(
+            "cannot determine Gemini project directory from resolved main thread path: {}",
+            resolved_main.path.display()
+        ));
+        return (BTreeMap::new(), BTreeMap::new());
+    };
+
+    let chats = load_gemini_project_chats(project_dir, warnings);
+    let logs = read_gemini_log_entries(project_dir, warnings);
+
+    let mut children = BTreeMap::<String, GeminiChildRecord>::new();
+
+    for chat in chats.values() {
+        if chat.session_id == main_session_id {
+            continue;
+        }
+        if chat
+            .explicit_parent_ids
+            .iter()
+            .any(|parent_id| parent_id == main_session_id)
+        {
+            push_explicit_gemini_relation(
+                &mut children,
+                &chat.session_id,
+                "child chat payload includes explicit parent session reference",
+                chat.last_update.clone(),
+            );
+        }
+    }
+
+    for entry in &logs {
+        if entry.session_id == main_session_id {
+            continue;
+        }
+        if entry
+            .explicit_parent_ids
+            .iter()
+            .any(|parent_id| parent_id == main_session_id)
+        {
+            push_explicit_gemini_relation(
+                &mut children,
+                &entry.session_id,
+                "logs.json entry includes explicit parent session reference",
+                entry.timestamp.clone(),
+            );
+        }
+    }
+
+    for (child_session_id, parent_session_id, timestamp) in infer_gemini_relations_from_logs(&logs)
+    {
+        if child_session_id == main_session_id || parent_session_id != main_session_id {
+            continue;
+        }
+        push_inferred_gemini_relation(
+            &mut children,
+            &child_session_id,
+            "logs.json shows child session starts with /resume after main session activity",
+            timestamp,
+        );
+    }
+
+    (chats, children)
+}
+
+fn load_gemini_project_chats(
+    project_dir: &Path,
+    warnings: &mut Vec<String>,
+) -> BTreeMap<String, GeminiChatRecord> {
+    let chats_dir = project_dir.join("chats");
+    if !chats_dir.exists() {
+        warnings.push(format!(
+            "Gemini project chats directory not found: {}",
+            chats_dir.display()
+        ));
+        return BTreeMap::new();
+    }
+
+    let mut chats = BTreeMap::<String, GeminiChatRecord>::new();
+    let Ok(entries) = fs::read_dir(&chats_dir) else {
+        warnings.push(format!(
+            "failed to read Gemini chats directory: {}",
+            chats_dir.display()
+        ));
+        return chats;
+    };
+
+    for entry in entries.filter_map(std::result::Result::ok) {
+        let path = entry.path();
+        let is_chat_file = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("session-") && name.ends_with(".json"));
+        if !is_chat_file || !path.is_file() {
+            continue;
+        }
+
+        let Some(chat) = parse_gemini_chat_file(&path, warnings) else {
+            continue;
+        };
+
+        match chats.get(&chat.session_id) {
+            Some(existing) => {
+                let existing_stamp = file_modified_epoch(&existing.path).unwrap_or(0);
+                let new_stamp = file_modified_epoch(&chat.path).unwrap_or(0);
+                if new_stamp > existing_stamp {
+                    chats.insert(chat.session_id.clone(), chat);
+                }
+            }
+            None => {
+                chats.insert(chat.session_id.clone(), chat);
+            }
+        }
+    }
+
+    chats
+}
+
+fn parse_gemini_chat_file(path: &Path, warnings: &mut Vec<String>) -> Option<GeminiChatRecord> {
+    let raw = match read_thread_raw(path) {
+        Ok(raw) => raw,
+        Err(err) => {
+            warnings.push(format!(
+                "failed to read Gemini chat {}: {err}",
+                path.display()
+            ));
+            return None;
+        }
+    };
+
+    let value = match serde_json::from_str::<Value>(&raw) {
+        Ok(value) => value,
+        Err(err) => {
+            warnings.push(format!(
+                "failed to parse Gemini chat JSON {}: {err}",
+                path.display()
+            ));
+            return None;
+        }
+    };
+
+    let Some(session_id) = value
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .and_then(parse_session_id_like)
+    else {
+        warnings.push(format!(
+            "Gemini chat missing valid sessionId: {}",
+            path.display()
+        ));
+        return None;
+    };
+
+    let last_update = value
+        .get("lastUpdated")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .or_else(|| {
+            value
+                .get("startTime")
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+        })
+        .or_else(|| modified_timestamp_string(path));
+
+    let status = infer_gemini_chat_status(&value);
+    let explicit_parent_ids = parse_parent_session_ids(&value);
+
+    Some(GeminiChatRecord {
+        session_id,
+        path: path.to_path_buf(),
+        last_update,
+        status,
+        explicit_parent_ids,
+    })
+}
+
+fn infer_gemini_chat_status(value: &Value) -> String {
+    let Some(messages) = value.get("messages").and_then(Value::as_array) else {
+        return STATUS_PENDING_INIT.to_string();
+    };
+
+    let mut has_error = false;
+    let mut has_assistant = false;
+    let mut has_user = false;
+
+    for message in messages {
+        let message_type = message
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if message_type == "error" || !message.get("error").is_none_or(Value::is_null) {
+            has_error = true;
+        }
+        if message_type == "gemini" || message_type == "assistant" {
+            has_assistant = true;
+        }
+        if message_type == "user" {
+            has_user = true;
+        }
+    }
+
+    if has_error {
+        STATUS_ERRORED.to_string()
+    } else if has_assistant {
+        STATUS_COMPLETED.to_string()
+    } else if has_user {
+        STATUS_RUNNING.to_string()
+    } else {
+        STATUS_PENDING_INIT.to_string()
+    }
+}
+
+fn read_gemini_log_entries(project_dir: &Path, warnings: &mut Vec<String>) -> Vec<GeminiLogEntry> {
+    let logs_path = project_dir.join("logs.json");
+    if !logs_path.exists() {
+        return Vec::new();
+    }
+
+    let raw = match read_thread_raw(&logs_path) {
+        Ok(raw) => raw,
+        Err(err) => {
+            warnings.push(format!(
+                "failed to read Gemini logs file {}: {err}",
+                logs_path.display()
+            ));
+            return Vec::new();
+        }
+    };
+
+    if raw.trim().is_empty() {
+        return Vec::new();
+    }
+
+    if let Ok(value) = serde_json::from_str::<Value>(&raw) {
+        return parse_gemini_logs_value(&logs_path, value, warnings);
+    }
+
+    let mut parsed = Vec::new();
+    for (index, line) in raw.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<Value>(line) {
+            Ok(value) => {
+                if let Some(entry) = parse_gemini_log_entry(&logs_path, index + 1, &value, warnings)
+                {
+                    parsed.push(entry);
+                }
+            }
+            Err(err) => warnings.push(format!(
+                "failed to parse Gemini logs line {} in {}: {err}",
+                index + 1,
+                logs_path.display()
+            )),
+        }
+    }
+    parsed
+}
+
+fn parse_gemini_logs_value(
+    logs_path: &Path,
+    value: Value,
+    warnings: &mut Vec<String>,
+) -> Vec<GeminiLogEntry> {
+    match value {
+        Value::Array(entries) => entries
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, entry)| {
+                parse_gemini_log_entry(logs_path, index + 1, &entry, warnings)
+            })
+            .collect(),
+        Value::Object(object) => {
+            if let Some(entries) = object.get("entries").and_then(Value::as_array) {
+                return entries
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, entry)| {
+                        parse_gemini_log_entry(logs_path, index + 1, entry, warnings)
+                    })
+                    .collect();
+            }
+
+            parse_gemini_log_entry(logs_path, 1, &Value::Object(object), warnings)
+                .into_iter()
+                .collect()
+        }
+        _ => {
+            warnings.push(format!(
+                "unsupported Gemini logs format in {}: expected JSON array or object",
+                logs_path.display()
+            ));
+            Vec::new()
+        }
+    }
+}
+
+fn parse_gemini_log_entry(
+    logs_path: &Path,
+    line: usize,
+    value: &Value,
+    warnings: &mut Vec<String>,
+) -> Option<GeminiLogEntry> {
+    let Some(object) = value.as_object() else {
+        warnings.push(format!(
+            "invalid Gemini log entry at {} line {}: expected JSON object",
+            logs_path.display(),
+            line
+        ));
+        return None;
+    };
+
+    let Some(session_id) = object
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .or_else(|| object.get("session_id").and_then(Value::as_str))
+        .and_then(parse_session_id_like)
+    else {
+        return None;
+    };
+
+    Some(GeminiLogEntry {
+        session_id,
+        message: object
+            .get("message")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        timestamp: object
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        entry_type: object
+            .get("type")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        explicit_parent_ids: parse_parent_session_ids(value),
+    })
+}
+
+fn infer_gemini_relations_from_logs(
+    logs: &[GeminiLogEntry],
+) -> Vec<(String, String, Option<String>)> {
+    let mut first_user_seen = BTreeSet::<String>::new();
+    let mut latest_session = None::<String>;
+    let mut relations = Vec::new();
+
+    for entry in logs {
+        let session_id = entry.session_id.clone();
+        let is_user_like = entry
+            .entry_type
+            .as_deref()
+            .is_none_or(|kind| kind == "user");
+
+        if is_user_like && !first_user_seen.contains(&session_id) {
+            first_user_seen.insert(session_id.clone());
+            if entry
+                .message
+                .as_deref()
+                .map(str::trim_start)
+                .is_some_and(|message| message.starts_with("/resume"))
+                && let Some(parent_session_id) = latest_session.clone()
+                && parent_session_id != session_id
+            {
+                relations.push((
+                    session_id.clone(),
+                    parent_session_id,
+                    entry.timestamp.clone(),
+                ));
+            }
+        }
+
+        latest_session = Some(session_id);
+    }
+
+    relations
+}
+
+fn push_explicit_gemini_relation(
+    children: &mut BTreeMap<String, GeminiChildRecord>,
+    child_session_id: &str,
+    evidence: &str,
+    timestamp: Option<String>,
+) {
+    let record = children.entry(child_session_id.to_string()).or_default();
+    record.relation.validated = true;
+    if !record.relation.evidence.iter().any(|item| item == evidence) {
+        record.relation.evidence.push(evidence.to_string());
+    }
+    if record.relation_timestamp.is_none() {
+        record.relation_timestamp = timestamp;
+    }
+}
+
+fn push_inferred_gemini_relation(
+    children: &mut BTreeMap<String, GeminiChildRecord>,
+    child_session_id: &str,
+    evidence: &str,
+    timestamp: Option<String>,
+) {
+    let record = children.entry(child_session_id.to_string()).or_default();
+    if record.relation.validated {
+        return;
+    }
+    if !record.relation.evidence.iter().any(|item| item == evidence) {
+        record.relation.evidence.push(evidence.to_string());
+    }
+    if record.relation_timestamp.is_none() {
+        record.relation_timestamp = timestamp;
+    }
+}
+
+fn parse_parent_session_ids(value: &Value) -> Vec<String> {
+    let mut parent_ids = BTreeSet::new();
+    collect_parent_session_ids(value, &mut parent_ids);
+    parent_ids.into_iter().collect()
+}
+
+fn collect_parent_session_ids(value: &Value, parent_ids: &mut BTreeSet<String>) {
+    match value {
+        Value::Object(object) => {
+            for (key, nested) in object {
+                let normalized_key = key.to_ascii_lowercase();
+                let is_parent_key = normalized_key.contains("parent")
+                    && (normalized_key.contains("session")
+                        || normalized_key.contains("thread")
+                        || normalized_key.contains("id"));
+                if is_parent_key {
+                    maybe_collect_session_id(nested, parent_ids);
+                }
+                if normalized_key == "parent" {
+                    maybe_collect_session_id(nested, parent_ids);
+                }
+                collect_parent_session_ids(nested, parent_ids);
+            }
+        }
+        Value::Array(values) => {
+            for nested in values {
+                collect_parent_session_ids(nested, parent_ids);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn maybe_collect_session_id(value: &Value, parent_ids: &mut BTreeSet<String>) {
+    match value {
+        Value::String(raw) => {
+            if let Some(session_id) = parse_session_id_like(raw) {
+                parent_ids.insert(session_id);
+            }
+        }
+        Value::Object(object) => {
+            for key in ["sessionId", "session_id", "threadId", "thread_id", "id"] {
+                if let Some(session_id) = object
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .and_then(parse_session_id_like)
+                {
+                    parent_ids.insert(session_id);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn parse_session_id_like(raw: &str) -> Option<String> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    if normalized.len() != 36 {
+        return None;
+    }
+
+    for (index, byte) in normalized.bytes().enumerate() {
+        if [8, 13, 18, 23].contains(&index) {
+            if byte != b'-' {
+                return None;
+            }
+            continue;
+        }
+
+        if !byte.is_ascii_hexdigit() {
+            return None;
+        }
+    }
+
+    Some(normalized)
+}
+
+fn extract_child_excerpt(
+    provider: ProviderKind,
+    path: &Path,
+    warnings: &mut Vec<String>,
+) -> Vec<SubagentExcerptMessage> {
+    let raw = match read_thread_raw(path) {
+        Ok(raw) => raw,
+        Err(err) => {
+            warnings.push(format!(
+                "failed reading child thread {}: {err}",
+                path.display()
+            ));
+            return Vec::new();
+        }
+    };
+
+    match render::extract_messages(provider, path, &raw) {
+        Ok(messages) => messages
+            .into_iter()
+            .rev()
+            .take(3)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .map(|message| SubagentExcerptMessage {
+                role: message.role,
+                text: message.text,
+            })
+            .collect(),
+        Err(err) => {
+            warnings.push(format!(
+                "failed extracting child messages from {}: {err}",
+                path.display()
+            ));
+            Vec::new()
+        }
+    }
 }
 
 fn discover_claude_agents(
