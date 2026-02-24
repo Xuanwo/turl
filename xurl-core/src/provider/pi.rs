@@ -1,15 +1,17 @@
 use std::cmp::Reverse;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::SystemTime;
 
 use serde_json::Value;
 use walkdir::WalkDir;
 
 use crate::error::{Result, XurlError};
-use crate::model::{ProviderKind, ResolutionMeta, ResolvedThread};
-use crate::provider::Provider;
+use crate::jsonl;
+use crate::model::{ProviderKind, ResolutionMeta, ResolvedThread, WriteRequest, WriteResult};
+use crate::provider::{Provider, WriteEventSink};
 
 #[derive(Debug, Clone)]
 pub struct PiProvider {
@@ -89,6 +91,165 @@ impl PiProvider {
         let count = scored.len();
         scored.into_iter().next().map(|(path, _)| (path, count))
     }
+
+    fn pi_bin() -> String {
+        std::env::var("XURL_PI_BIN").unwrap_or_else(|_| "pi".to_string())
+    }
+
+    fn spawn_pi_command(args: &[&str]) -> Result<std::process::Child> {
+        let bin = Self::pi_bin();
+        Command::new(&bin)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|source| {
+                if source.kind() == std::io::ErrorKind::NotFound {
+                    XurlError::CommandNotFound { command: bin }
+                } else {
+                    XurlError::Io {
+                        path: PathBuf::from(bin),
+                        source,
+                    }
+                }
+            })
+    }
+
+    fn extract_assistant_text(message: &Value) -> Option<String> {
+        if message.get("role").and_then(Value::as_str) != Some("assistant") {
+            return None;
+        }
+
+        if let Some(content) = message.get("content").and_then(Value::as_str) {
+            if content.is_empty() {
+                return None;
+            }
+            return Some(content.to_string());
+        }
+
+        let content = message.get("content")?.as_array()?;
+        let text = content
+            .iter()
+            .filter_map(|item| {
+                if item.get("type").and_then(Value::as_str) == Some("text") {
+                    item.get("text").and_then(Value::as_str)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        if text.is_empty() { None } else { Some(text) }
+    }
+
+    fn run_write(
+        &self,
+        args: &[&str],
+        req: &WriteRequest,
+        sink: &mut dyn WriteEventSink,
+    ) -> Result<WriteResult> {
+        let mut child = Self::spawn_pi_command(args)?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| XurlError::WriteProtocol("pi stdout pipe is unavailable".to_string()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| XurlError::WriteProtocol("pi stderr pipe is unavailable".to_string()))?;
+        let stderr_handle = std::thread::spawn(move || {
+            let mut reader = BufReader::new(stderr);
+            let mut content = String::new();
+            let _ = reader.read_to_string(&mut content);
+            content
+        });
+
+        let mut session_id = req.session_id.clone();
+        let mut final_text = None::<String>;
+        let mut streamed_text = String::new();
+        let mut streamed_delta = false;
+        let stream_path = Path::new("<pi:stdout>");
+        let reader = BufReader::new(stdout);
+        jsonl::parse_jsonl_reader(stream_path, reader, |_, value| {
+            let Some(event_type) = value.get("type").and_then(Value::as_str) else {
+                return Ok(());
+            };
+
+            match event_type {
+                "session" => {
+                    if let Some(current_session_id) = value.get("id").and_then(Value::as_str)
+                        && session_id.as_deref() != Some(current_session_id)
+                    {
+                        sink.on_session_ready(ProviderKind::Pi, current_session_id)?;
+                        session_id = Some(current_session_id.to_string());
+                    }
+                }
+                "message_update" => {
+                    if value
+                        .get("assistantMessageEvent")
+                        .and_then(Value::as_object)
+                        .and_then(|event| event.get("type"))
+                        .and_then(Value::as_str)
+                        == Some("text_delta")
+                        && let Some(delta) = value
+                            .get("assistantMessageEvent")
+                            .and_then(Value::as_object)
+                            .and_then(|event| event.get("delta"))
+                            .and_then(Value::as_str)
+                        && !delta.is_empty()
+                    {
+                        sink.on_text_delta(delta)?;
+                        streamed_text.push_str(delta);
+                        final_text = Some(streamed_text.clone());
+                        streamed_delta = true;
+                    }
+                }
+                "message_end" | "turn_end" => {
+                    if streamed_delta {
+                        return Ok(());
+                    }
+                    if let Some(text) = value
+                        .get("message")
+                        .and_then(Self::extract_assistant_text)
+                        .filter(|text| !text.is_empty())
+                    {
+                        sink.on_text_delta(&text)?;
+                        final_text = Some(text);
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        })?;
+
+        let status = child.wait().map_err(|source| XurlError::Io {
+            path: PathBuf::from(Self::pi_bin()),
+            source,
+        })?;
+        let stderr_content = stderr_handle.join().unwrap_or_default();
+        if !status.success() {
+            return Err(XurlError::CommandFailed {
+                command: format!("{} {}", Self::pi_bin(), args.join(" ")),
+                code: status.code(),
+                stderr: stderr_content.trim().to_string(),
+            });
+        }
+
+        let session_id = if let Some(session_id) = session_id {
+            session_id
+        } else {
+            return Err(XurlError::WriteProtocol(
+                "missing session id in pi event stream".to_string(),
+            ));
+        };
+
+        Ok(WriteResult {
+            provider: ProviderKind::Pi,
+            session_id,
+            final_text,
+        })
+    }
 }
 
 impl Provider for PiProvider {
@@ -127,6 +288,27 @@ impl Provider for PiProvider {
             session_id: session_id.to_string(),
             searched_roots: vec![sessions_root],
         })
+    }
+
+    fn write(&self, req: &WriteRequest, sink: &mut dyn WriteEventSink) -> Result<WriteResult> {
+        if let Some(session_id) = req.session_id.as_deref() {
+            let resolved = self.resolve(session_id)?;
+            let session_path = resolved.path.to_string_lossy().to_string();
+            self.run_write(
+                &[
+                    "--session",
+                    session_path.as_str(),
+                    "-p",
+                    req.prompt.as_str(),
+                    "--mode",
+                    "json",
+                ],
+                req,
+                sink,
+            )
+        } else {
+            self.run_write(&["-p", req.prompt.as_str(), "--mode", "json"], req, sink)
+        }
     }
 }
 

@@ -1566,15 +1566,123 @@ fn write_command_not_found_has_hint() {
 
 #[cfg(unix)]
 #[test]
-fn write_unsupported_collection_provider_returns_error() {
+fn write_amp_create_stream_json_path_works() {
+    let mock = setup_mock_bins(&[(
+        "amp",
+        r#"
+if [ "$1" = "-x" ] && [ "$3" = "--stream-json" ]; then
+  echo '{"type":"system","subtype":"init","session_id":"T-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}'
+  echo '{"type":"assistant","session_id":"T-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","message":{"content":[{"type":"text","text":"hello from amp"}]}}'
+  echo '{"type":"result","subtype":"success","session_id":"T-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","result":"hello from amp"}'
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 7
+"#,
+    )]);
+
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
-    cmd.arg("agents://amp")
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg("agents://amp")
         .arg("-d")
         .arg("hello")
         .assert()
-        .failure()
+        .success()
+        .stdout(predicate::str::contains("hello from amp"))
         .stderr(predicate::str::contains(
-            "provider does not support write mode: amp",
+            "created: agents://amp/T-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_gemini_create_tolerates_non_json_prefix() {
+    let mock = setup_mock_bins(&[(
+        "gemini",
+        r#"
+if [ "$1" = "-p" ] && [ "$3" = "--output-format" ] && [ "$4" = "stream-json" ]; then
+  echo 'YOLO mode is enabled.'
+  echo '{"type":"init","session_id":"99999999-9999-4999-8999-999999999999"}'
+  echo '{"type":"message","role":"assistant","content":"hello from gemini","delta":true}'
+  echo '{"type":"result","status":"success"}'
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 7
+"#,
+    )]);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg("agents://gemini")
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("hello from gemini"))
+        .stderr(predicate::str::contains(
+            "created: agents://gemini/99999999-9999-4999-8999-999999999999",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_pi_create_stream_json_path_works() {
+    let mock = setup_mock_bins(&[(
+        "pi",
+        r#"
+if [ "$1" = "-p" ] && [ "$3" = "--mode" ] && [ "$4" = "json" ]; then
+  echo '{"type":"session","id":"aaaaaaaa-1111-4222-8333-bbbbbbbbbbbb"}'
+  echo '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"hello from "}}'
+  echo '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"pi"}}'
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 7
+"#,
+    )]);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg("agents://pi")
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("hello from pi"))
+        .stderr(predicate::str::contains(
+            "created: agents://pi/aaaaaaaa-1111-4222-8333-bbbbbbbbbbbb",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_opencode_create_tolerates_non_json_prefix() {
+    let mock = setup_mock_bins(&[(
+        "opencode",
+        r#"
+if [ "$1" = "run" ] && [ "$3" = "--format" ] && [ "$4" = "json" ]; then
+  echo 'ProviderModelNotFoundError: ignored bootstrap log'
+  echo '{"type":"session.start","sessionID":"ses_43a90e3adffejRgrTdlJa48CtE"}'
+  echo '{"type":"assistant.delta","delta":"hello from "}'
+  echo '{"type":"assistant.delta","delta":"opencode"}'
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 7
+"#,
+    )]);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg("agents://opencode")
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("hello from opencode"))
+        .stderr(predicate::str::contains(
+            "created: agents://opencode/ses_43a90e3adffejRgrTdlJa48CtE",
         ));
 }
 

@@ -309,17 +309,41 @@ impl WriteEventSink for CliWriteSink {
 
 fn user_facing_error(err: &XurlError) -> String {
     match err {
+        XurlError::CommandNotFound { command } if command.contains("amp") => format!(
+            "{err}\nhint: write mode needs Amp CLI; run `amp --version`, install Amp CLI if missing, then run `amp login`."
+        ),
         XurlError::CommandNotFound { command } if command.contains("codex") => format!(
             "{err}\nhint: write mode needs Codex CLI; run `codex --version`, install Codex CLI if missing, then run `codex login`."
         ),
         XurlError::CommandNotFound { command } if command.contains("claude") => format!(
             "{err}\nhint: write mode needs Claude CLI; run `claude --version`, install Claude Code if missing, then authenticate."
         ),
+        XurlError::CommandNotFound { command } if command.contains("gemini") => format!(
+            "{err}\nhint: write mode needs Gemini CLI; run `gemini --version`, install Gemini CLI if missing, then authenticate."
+        ),
+        XurlError::CommandNotFound { command } if command.contains("pi") => format!(
+            "{err}\nhint: write mode needs pi CLI; run `pi --version`, install pi if missing, then configure provider credentials."
+        ),
+        XurlError::CommandNotFound { command } if command.contains("opencode") => format!(
+            "{err}\nhint: write mode needs OpenCode CLI; run `opencode --version`, install OpenCode if missing, then configure providers/models."
+        ),
+        XurlError::CommandFailed { command, .. } if command.contains("amp") => {
+            format!("{err}\nhint: verify authentication with `amp login` and retry.")
+        }
         XurlError::CommandFailed { command, .. } if command.contains("codex") => {
             format!("{err}\nhint: verify authentication with `codex login` and retry.")
         }
         XurlError::CommandFailed { command, .. } if command.contains("claude") => format!(
             "{err}\nhint: verify authentication with `claude auth` (or your configured login flow) and retry."
+        ),
+        XurlError::CommandFailed { command, .. } if command.contains("gemini") => format!(
+            "{err}\nhint: verify Gemini authentication/configuration and retry the command directly once."
+        ),
+        XurlError::CommandFailed { command, .. } if command.contains("pi") => format!(
+            "{err}\nhint: verify pi provider/model credentials and retry with `pi -p \"hello\" --mode json`."
+        ),
+        XurlError::CommandFailed { command, .. } if command.contains("opencode") => format!(
+            "{err}\nhint: verify OpenCode provider/model configuration and retry with `opencode run \"hello\" --format json`."
         ),
         _ => err.to_string(),
     }
