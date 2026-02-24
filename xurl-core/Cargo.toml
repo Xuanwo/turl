@@ -1,6 +1,6 @@
 [package]
 name = "xurl-core"
-version = "0.0.14"
+version = "0.0.15"
 edition = "2024"
 
 [dependencies]
