@@ -1,13 +1,15 @@
 use std::collections::HashMap;
 use std::fs;
+use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
 
 use crate::error::{Result, XurlError};
-use crate::model::{ProviderKind, ResolutionMeta, ResolvedThread};
-use crate::provider::Provider;
+use crate::model::{ProviderKind, ResolutionMeta, ResolvedThread, WriteRequest, WriteResult};
+use crate::provider::{Provider, WriteEventSink};
 
 #[derive(Debug, Clone)]
 pub struct OpencodeProvider {
@@ -136,6 +138,235 @@ impl OpencodeProvider {
         }
         output
     }
+
+    fn opencode_bin() -> String {
+        std::env::var("XURL_OPENCODE_BIN").unwrap_or_else(|_| "opencode".to_string())
+    }
+
+    fn spawn_opencode_command(args: &[&str]) -> Result<std::process::Child> {
+        let bin = Self::opencode_bin();
+        Command::new(&bin)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|source| {
+                if source.kind() == std::io::ErrorKind::NotFound {
+                    XurlError::CommandNotFound { command: bin }
+                } else {
+                    XurlError::Io {
+                        path: PathBuf::from(bin),
+                        source,
+                    }
+                }
+            })
+    }
+
+    fn collect_text(value: Option<&Value>) -> String {
+        match value {
+            Some(Value::String(text)) => text.to_string(),
+            Some(Value::Array(items)) => items
+                .iter()
+                .map(|item| Self::collect_text(Some(item)))
+                .collect::<Vec<_>>()
+                .join(""),
+            Some(Value::Object(map)) => {
+                if map.get("type").and_then(Value::as_str) == Some("text")
+                    && let Some(text) = map.get("text").and_then(Value::as_str)
+                {
+                    return text.to_string();
+                }
+
+                if let Some(text) = map.get("text").and_then(Value::as_str) {
+                    return text.to_string();
+                }
+
+                if let Some(content) = map.get("content") {
+                    return Self::collect_text(Some(content));
+                }
+
+                String::new()
+            }
+            _ => String::new(),
+        }
+    }
+
+    fn extract_session_id(value: &Value) -> Option<&str> {
+        value
+            .get("sessionID")
+            .and_then(Value::as_str)
+            .or_else(|| value.get("sessionId").and_then(Value::as_str))
+    }
+
+    fn extract_delta_text(value: &Value) -> Option<String> {
+        value
+            .get("delta")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(ToString::to_string)
+            .or_else(|| {
+                value
+                    .get("textDelta")
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.is_empty())
+                    .map(ToString::to_string)
+            })
+            .or_else(|| {
+                value
+                    .get("message")
+                    .and_then(Value::as_object)
+                    .and_then(|message| message.get("delta"))
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.is_empty())
+                    .map(ToString::to_string)
+            })
+    }
+
+    fn extract_assistant_text(value: &Value) -> Option<String> {
+        if value.get("role").and_then(Value::as_str) == Some("assistant") {
+            let text = Self::collect_text(value.get("content"));
+            if !text.is_empty() {
+                return Some(text);
+            }
+        }
+
+        if let Some(message) = value.get("message")
+            && message.get("role").and_then(Value::as_str) == Some("assistant")
+        {
+            let text = Self::collect_text(message.get("content"));
+            if !text.is_empty() {
+                return Some(text);
+            }
+        }
+
+        value
+            .get("response")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(ToString::to_string)
+    }
+
+    fn run_write(
+        &self,
+        args: &[&str],
+        req: &WriteRequest,
+        sink: &mut dyn WriteEventSink,
+    ) -> Result<WriteResult> {
+        let mut child = Self::spawn_opencode_command(args)?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            XurlError::WriteProtocol("opencode stdout pipe is unavailable".to_string())
+        })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            XurlError::WriteProtocol("opencode stderr pipe is unavailable".to_string())
+        })?;
+        let stderr_handle = std::thread::spawn(move || {
+            let mut reader = BufReader::new(stderr);
+            let mut content = String::new();
+            let _ = reader.read_to_string(&mut content);
+            content
+        });
+
+        let stream_path = PathBuf::from("<opencode:stdout>");
+        let mut session_id = req.session_id.clone();
+        let mut final_text = None::<String>;
+        let mut streamed_text = String::new();
+        let mut streamed_delta = false;
+        let mut stream_error = None::<String>;
+        let mut saw_json_event = false;
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            let line = line.map_err(|source| XurlError::Io {
+                path: stream_path.clone(),
+                source,
+            })?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+                continue;
+            };
+            saw_json_event = true;
+
+            if let Some(current_session_id) = Self::extract_session_id(&value)
+                && session_id.as_deref() != Some(current_session_id)
+            {
+                sink.on_session_ready(ProviderKind::Opencode, current_session_id)?;
+                session_id = Some(current_session_id.to_string());
+            }
+
+            if value.get("type").and_then(Value::as_str) == Some("error") {
+                stream_error = value
+                    .get("error")
+                    .and_then(Value::as_object)
+                    .and_then(|error| {
+                        error
+                            .get("data")
+                            .and_then(Value::as_object)
+                            .and_then(|data| data.get("message"))
+                            .and_then(Value::as_str)
+                            .or_else(|| error.get("message").and_then(Value::as_str))
+                    })
+                    .or_else(|| value.get("message").and_then(Value::as_str))
+                    .map(ToString::to_string);
+                continue;
+            }
+
+            if let Some(delta) = Self::extract_delta_text(&value) {
+                sink.on_text_delta(&delta)?;
+                streamed_text.push_str(&delta);
+                final_text = Some(streamed_text.clone());
+                streamed_delta = true;
+                continue;
+            }
+
+            if !streamed_delta && let Some(text) = Self::extract_assistant_text(&value) {
+                sink.on_text_delta(&text)?;
+                final_text = Some(text);
+            }
+        }
+
+        let status = child.wait().map_err(|source| XurlError::Io {
+            path: PathBuf::from(Self::opencode_bin()),
+            source,
+        })?;
+        let stderr_content = stderr_handle.join().unwrap_or_default();
+        if !status.success() {
+            return Err(XurlError::CommandFailed {
+                command: format!("{} {}", Self::opencode_bin(), args.join(" ")),
+                code: status.code(),
+                stderr: stderr_content.trim().to_string(),
+            });
+        }
+
+        if !saw_json_event {
+            return Err(XurlError::WriteProtocol(
+                "opencode output does not contain JSON events".to_string(),
+            ));
+        }
+
+        if let Some(stream_error) = stream_error {
+            return Err(XurlError::WriteProtocol(format!(
+                "opencode stream returned an error: {stream_error}"
+            )));
+        }
+
+        let session_id = if let Some(session_id) = session_id {
+            session_id
+        } else {
+            return Err(XurlError::WriteProtocol(
+                "missing session id in opencode event stream".to_string(),
+            ));
+        };
+
+        Ok(WriteResult {
+            provider: ProviderKind::Opencode,
+            session_id,
+            final_text,
+        })
+    }
 }
 
 impl Provider for OpencodeProvider {
@@ -210,6 +441,25 @@ impl Provider for OpencodeProvider {
                 warnings,
             },
         })
+    }
+
+    fn write(&self, req: &WriteRequest, sink: &mut dyn WriteEventSink) -> Result<WriteResult> {
+        if let Some(session_id) = req.session_id.as_deref() {
+            self.run_write(
+                &[
+                    "run",
+                    req.prompt.as_str(),
+                    "--session",
+                    session_id,
+                    "--format",
+                    "json",
+                ],
+                req,
+                sink,
+            )
+        } else {
+            self.run_write(&["run", req.prompt.as_str(), "--format", "json"], req, sink)
+        }
     }
 }
 

@@ -3,6 +3,13 @@ name: xurl
 description: Use xurl to read, discover, and write AI agent conversations through agents:// URIs.
 ---
 
+## When to Use
+
+- User gives `agents://...` URI.
+- User asks to read or summarize a conversation.
+- User asks to discover child targets before drill-down.
+- User asks to start or continue conversations for providers.
+
 ## Installation
 
 Pick up the preferred ways based on current context:
@@ -62,32 +69,18 @@ npm update -g @xuanwo/xurl
 xurl --version
 ```
 
-## When to Use
-
-- User gives `agents://...` URI.
-- User asks to read or summarize a conversation.
-- User asks to discover child targets before drill-down.
-- User asks to start or continue conversations for providers.
-
 ## Core Workflows
 
 ### 1) Read
 
 ```bash
 xurl agents://codex/<conversation_id>
-xurl agents://claude/<conversation_id>
-xurl agents://gemini/<conversation_id>
 ```
 
 ### 2) Discover
 
 ```bash
-xurl -I agents://amp/T-019c0797-c402-7389-bd80-d785c98df295
 xurl -I agents://codex/<conversation_id>
-xurl -I agents://claude/<conversation_id>
-xurl -I agents://gemini/<conversation_id>
-xurl -I agents://opencode/<conversation_id>
-xurl -I agents://pi/<session_id>
 ```
 
 Use returned `subagents` or `entries` URI for next step.
@@ -96,11 +89,7 @@ OpenCode child linkage is validated by sqlite `session.parent_id`.
 ### 2.1) Drill Down Child Thread
 
 ```bash
-xurl agents://amp/T-019c0797-c402-7389-bd80-d785c98df295/T-1abc0797-c402-7389-bd80-d785c98df295
 xurl agents://codex/<main_conversation_id>/<agent_id>
-xurl agents://claude/<main_conversation_id>/<agent_id>
-xurl agents://pi/<conversation_id>/<child_session_id>
-xurl agents://pi/<conversation_id>/<entry_id>
 ```
 
 ### 3) Write
@@ -148,61 +137,24 @@ Write output:
 
 Canonical:
 
-- `agents://codex/<session_id>`
-- `agents://codex/threads/<session_id>`
-- `agents://codex/<main_session_id>/<agent_id>`
-- `agents://amp/<thread_id>`
-- `agents://claude/<session_id>`
-- `agents://claude/<main_session_id>/<agent_id>`
-- `agents://gemini/<session_id>`
-- `agents://gemini/<main_session_id>/<child_session_id>`
-- `agents://pi/<session_id>`
-- `agents://pi/<session_id>/<entry_id>`
-- `agents://opencode/<session_id>`
+- `agents://<provider>/<conversation_id>`
+- `agents://<provider>/<conversation_id>/<child_id>`
 
 Child drill-down URI forms:
 
-- `agents://amp/<main_thread_id>/<child_thread_id>`
-- `agents://codex/<main_conversation_id>/<agent_id>`
-- `agents://claude/<main_conversation_id>/<agent_id>`
-- `agents://pi/<conversation_id>/<entry_id>`
+- `agents://<provider>/<main_conversation_id>/<child_id>`
 
 Legacy compatibility:
 
-- `codex://<session_id>`
-- `codex://threads/<session_id>`
-- `codex://<main_session_id>/<agent_id>`
-- `amp://<thread_id>`
-- `claude://<session_id>`
-- `claude://<main_session_id>/<agent_id>`
-- `gemini://<session_id>`
-- `gemini://<main_session_id>/<child_session_id>`
-- `pi://<session_id>`
-- `pi://<session_id>/<entry_id>`
-- `opencode://<session_id>`
+- `<provider>://<conversation_id>`
+- `<provider>://<conversation_id>/<child_id>`
 
 Pi child forms:
 
-- `agents://pi/<main_session_id>/<child_session_id>`: UUID child session drill-down
-- `agents://pi/<session_id>/<entry_id>`: entry-based branch drill-down
+- `agents://pi/<session_id>/<child_id>`: `<child_id>` can be a UUID child session id or an entry id
 
 ## Failure Handling
 
-Common failures:
+### `command not found: <agent>`
 
-- invalid URI
-- invalid mode combination
-- conversation not found
-- unsupported write provider
-
-Write dependency errors:
-
-- `command not found: codex`
-  - run `codex --version`
-  - install Codex CLI
-  - run `codex login`
-
-- `command not found: claude`
-  - run `claude --version`
-  - install Claude Code CLI
-  - authenticate and retry
+search web to install the `<agent>` `CLI, ask users to authenticate the agent

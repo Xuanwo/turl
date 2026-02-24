@@ -1,14 +1,16 @@
 use std::cmp::Reverse;
 use std::fs;
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::SystemTime;
 
 use serde_json::Value;
 use walkdir::WalkDir;
 
 use crate::error::{Result, XurlError};
-use crate::model::{ProviderKind, ResolutionMeta, ResolvedThread};
-use crate::provider::Provider;
+use crate::model::{ProviderKind, ResolutionMeta, ResolvedThread, WriteRequest, WriteResult};
+use crate::provider::{Provider, WriteEventSink};
 
 #[derive(Debug, Clone)]
 pub struct GeminiProvider {
@@ -88,6 +90,153 @@ impl GeminiProvider {
         let count = scored.len();
         scored.into_iter().next().map(|(path, _)| (path, count))
     }
+
+    fn gemini_bin() -> String {
+        std::env::var("XURL_GEMINI_BIN").unwrap_or_else(|_| "gemini".to_string())
+    }
+
+    fn spawn_gemini_command(args: &[&str]) -> Result<std::process::Child> {
+        let bin = Self::gemini_bin();
+        Command::new(&bin)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|source| {
+                if source.kind() == std::io::ErrorKind::NotFound {
+                    XurlError::CommandNotFound { command: bin }
+                } else {
+                    XurlError::Io {
+                        path: PathBuf::from(bin),
+                        source,
+                    }
+                }
+            })
+    }
+
+    fn run_write(
+        &self,
+        args: &[&str],
+        req: &WriteRequest,
+        sink: &mut dyn WriteEventSink,
+    ) -> Result<WriteResult> {
+        let mut child = Self::spawn_gemini_command(args)?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            XurlError::WriteProtocol("gemini stdout pipe is unavailable".to_string())
+        })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            XurlError::WriteProtocol("gemini stderr pipe is unavailable".to_string())
+        })?;
+        let stderr_handle = std::thread::spawn(move || {
+            let mut reader = BufReader::new(stderr);
+            let mut content = String::new();
+            let _ = reader.read_to_string(&mut content);
+            content
+        });
+
+        let stream_path = Path::new("<gemini:stdout>");
+        let mut session_id = req.session_id.clone();
+        let mut final_text = None::<String>;
+        let mut streamed_text = String::new();
+        let mut stream_error = None::<String>;
+        let mut saw_json_event = false;
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            let line = line.map_err(|source| XurlError::Io {
+                path: stream_path.to_path_buf(),
+                source,
+            })?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+                continue;
+            };
+            saw_json_event = true;
+
+            if let Some(current_session_id) = value.get("session_id").and_then(Value::as_str)
+                && session_id.as_deref() != Some(current_session_id)
+            {
+                sink.on_session_ready(ProviderKind::Gemini, current_session_id)?;
+                session_id = Some(current_session_id.to_string());
+            }
+
+            if value.get("type").and_then(Value::as_str) == Some("message")
+                && value.get("role").and_then(Value::as_str) == Some("assistant")
+                && let Some(text) = value.get("content").and_then(Value::as_str)
+                && !text.is_empty()
+            {
+                sink.on_text_delta(text)?;
+                if value.get("delta").and_then(Value::as_bool) == Some(true) {
+                    streamed_text.push_str(text);
+                    final_text = Some(streamed_text.clone());
+                } else {
+                    final_text = Some(text.to_string());
+                }
+            }
+
+            if value.get("type").and_then(Value::as_str) == Some("result")
+                && value.get("status").and_then(Value::as_str) != Some("success")
+            {
+                stream_error = value
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .or_else(|| value.get("message").and_then(Value::as_str))
+                    .or_else(|| value.get("status").and_then(Value::as_str))
+                    .map(ToString::to_string);
+            }
+
+            if final_text.is_none()
+                && let Some(text) = value.get("response").and_then(Value::as_str)
+                && !text.is_empty()
+            {
+                sink.on_text_delta(text)?;
+                final_text = Some(text.to_string());
+            }
+        }
+
+        let status = child.wait().map_err(|source| XurlError::Io {
+            path: PathBuf::from(Self::gemini_bin()),
+            source,
+        })?;
+        let stderr_content = stderr_handle.join().unwrap_or_default();
+        if !status.success() {
+            return Err(XurlError::CommandFailed {
+                command: format!("{} {}", Self::gemini_bin(), args.join(" ")),
+                code: status.code(),
+                stderr: stderr_content.trim().to_string(),
+            });
+        }
+
+        if !saw_json_event {
+            return Err(XurlError::WriteProtocol(
+                "gemini output does not contain JSON events".to_string(),
+            ));
+        }
+
+        if let Some(stream_error) = stream_error {
+            return Err(XurlError::WriteProtocol(format!(
+                "gemini stream returned an error: {stream_error}"
+            )));
+        }
+
+        let session_id = if let Some(session_id) = session_id {
+            session_id
+        } else {
+            return Err(XurlError::WriteProtocol(
+                "missing session id in gemini event stream".to_string(),
+            ));
+        };
+
+        Ok(WriteResult {
+            provider: ProviderKind::Gemini,
+            session_id,
+            final_text,
+        })
+    }
 }
 
 impl Provider for GeminiProvider {
@@ -126,6 +275,29 @@ impl Provider for GeminiProvider {
             session_id: session_id.to_string(),
             searched_roots: vec![tmp_root],
         })
+    }
+
+    fn write(&self, req: &WriteRequest, sink: &mut dyn WriteEventSink) -> Result<WriteResult> {
+        if let Some(session_id) = req.session_id.as_deref() {
+            self.run_write(
+                &[
+                    "-p",
+                    req.prompt.as_str(),
+                    "--output-format",
+                    "stream-json",
+                    "--resume",
+                    session_id,
+                ],
+                req,
+                sink,
+            )
+        } else {
+            self.run_write(
+                &["-p", req.prompt.as_str(), "--output-format", "stream-json"],
+                req,
+                sink,
+            )
+        }
     }
 }
 
