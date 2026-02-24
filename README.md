@@ -21,39 +21,18 @@
 - Non-fatal diagnostics are kept internal; only fatal errors are printed to `stderr`.
 - Automatically respects official environment variables and default local data roots for each supported agent.
 
-## Install
+## Quick Start
 
-Install from PyPI via `uv`:
-
-```bash
-uv tool install xuanwo-xurl
-xurl --help
-```
-
-Or install from PyPI via `pipx`:
-
-```bash
-pipx install xuanwo-xurl
-xurl --help
-```
-
-Or run directly from npm with `npx`:
-
-```bash
-npx @xuanwo/xurl --help
-```
-
-Or install globally via npm:
-
-```bash
-npm install -g @xuanwo/xurl
-xurl --help
-```
-
-Install as a Codex skill:
+1. Add `xurl` as an agent skill:
 
 ```bash
 npx skills add Xuanwo/xurl
+```
+
+2. Start your agent and ask the agent to summarize a thread:
+
+```text
+Please summarize this thread: agents://codex/xxx_thread
 ```
 
 ## URL Format

@@ -9,19 +9,44 @@ Use this skill when you need to read AI agent thread content by URI.
 
 ## Installation
 
-`xurl` is published to both PyPI (`xuanwo-xurl`) and npm (`@xuanwo/xurl`).
+Pick up the preferred ways based on current context:
 
-Install `xurl` from PyPI via `uv`:
+### Python Env
+
+install from PyPI via `uv`:
 
 ```bash
 uv tool install xuanwo-xurl
 xurl --version
 ```
 
-Or run directly from npm:
+Upgrade `xurl` installed by `uv`:
+
+```bash
+uv tool upgrade xuanwo-xurl
+xurl --version
+```
+
+### Node Env
+
+Temporary usage without install:
 
 ```bash
 npx @xuanwo/xurl --help
+```
+
+install globally via npm:
+
+```bash
+npm install -g @xuanwo/xurl
+xurl --version
+```
+
+Upgrade `xurl` installed by npm:
+
+```bash
+npm update -g @xuanwo/xurl
+xurl --version
 ```
 
 ## When to Use
