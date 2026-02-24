@@ -91,6 +91,10 @@ impl GeminiProvider {
 }
 
 impl Provider for GeminiProvider {
+    fn kind(&self) -> ProviderKind {
+        ProviderKind::Gemini
+    }
+
     fn resolve(&self, session_id: &str) -> Result<ResolvedThread> {
         let tmp_root = self.tmp_root();
         let candidates = Self::find_candidates(&tmp_root, session_id);

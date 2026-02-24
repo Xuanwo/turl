@@ -1,14 +1,18 @@
 use std::cmp::Reverse;
 use std::fs;
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::SystemTime;
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
+use serde_json::Value;
 use walkdir::WalkDir;
 
 use crate::error::{Result, XurlError};
-use crate::model::{ProviderKind, ResolutionMeta, ResolvedThread};
-use crate::provider::Provider;
+use crate::jsonl;
+use crate::model::{ProviderKind, ResolutionMeta, ResolvedThread, WriteRequest, WriteResult};
+use crate::provider::{Provider, WriteEventSink};
 
 #[derive(Debug, Clone)]
 pub struct CodexProvider {
@@ -148,9 +152,121 @@ impl CodexProvider {
         let count = scored.len();
         scored.into_iter().next().map(|(path, _)| (path, count))
     }
+
+    fn codex_bin() -> String {
+        std::env::var("XURL_CODEX_BIN").unwrap_or_else(|_| "codex".to_string())
+    }
+
+    fn spawn_codex_command(args: &[&str]) -> Result<std::process::Child> {
+        let bin = Self::codex_bin();
+        Command::new(&bin)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|source| {
+                if source.kind() == std::io::ErrorKind::NotFound {
+                    XurlError::CommandNotFound { command: bin }
+                } else {
+                    XurlError::Io {
+                        path: PathBuf::from(bin),
+                        source,
+                    }
+                }
+            })
+    }
+
+    fn run_write(
+        &self,
+        args: &[&str],
+        req: &WriteRequest,
+        sink: &mut dyn WriteEventSink,
+    ) -> Result<WriteResult> {
+        let mut child = Self::spawn_codex_command(args)?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            XurlError::WriteProtocol("codex stdout pipe is unavailable".to_string())
+        })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            XurlError::WriteProtocol("codex stderr pipe is unavailable".to_string())
+        })?;
+        let stderr_handle = std::thread::spawn(move || {
+            let mut reader = BufReader::new(stderr);
+            let mut content = String::new();
+            let _ = reader.read_to_string(&mut content);
+            content
+        });
+
+        let mut session_id = req.session_id.clone();
+        let mut final_text = None::<String>;
+        let stream_path = Path::new("<codex:stdout>");
+        let reader = BufReader::new(stdout);
+        jsonl::parse_jsonl_reader(stream_path, reader, |_, value| {
+            let Some(event_type) = value.get("type").and_then(Value::as_str) else {
+                return Ok(());
+            };
+
+            if event_type == "thread.started" {
+                if let Some(thread_id) = value.get("thread_id").and_then(Value::as_str) {
+                    sink.on_session_ready(ProviderKind::Codex, thread_id)?;
+                    session_id = Some(thread_id.to_string());
+                }
+                return Ok(());
+            }
+
+            if event_type != "item.completed" {
+                return Ok(());
+            }
+
+            let Some(item) = value.get("item") else {
+                return Ok(());
+            };
+            if item.get("type").and_then(Value::as_str) != Some("agent_message") {
+                return Ok(());
+            }
+
+            if let Some(text) = item.get("text").and_then(Value::as_str) {
+                sink.on_text_delta(text)?;
+                final_text = Some(text.to_string());
+            }
+            Ok(())
+        })?;
+
+        let status = child.wait().map_err(|source| XurlError::Io {
+            path: PathBuf::from(Self::codex_bin()),
+            source,
+        })?;
+        let stderr_content = stderr_handle.join().unwrap_or_default();
+
+        if !status.success() {
+            return Err(XurlError::CommandFailed {
+                command: format!("{} {}", Self::codex_bin(), args.join(" ")),
+                code: status.code(),
+                stderr: stderr_content.trim().to_string(),
+            });
+        }
+
+        let session_id = if let Some(session_id) = session_id {
+            session_id
+        } else {
+            return Err(XurlError::WriteProtocol(
+                "missing thread id in codex event stream".to_string(),
+            ));
+        };
+
+        Ok(WriteResult {
+            provider: ProviderKind::Codex,
+            session_id,
+            final_text,
+        })
+    }
 }
 
 impl Provider for CodexProvider {
+    fn kind(&self) -> ProviderKind {
+        ProviderKind::Codex
+    }
+
     fn resolve(&self, session_id: &str) -> Result<ResolvedThread> {
         let sessions = self.sessions_root();
         let archived = self.archived_root();
@@ -253,6 +369,18 @@ impl Provider for CodexProvider {
                 .chain(state_dbs)
                 .collect(),
         })
+    }
+
+    fn write(&self, req: &WriteRequest, sink: &mut dyn WriteEventSink) -> Result<WriteResult> {
+        if let Some(session_id) = req.session_id.as_deref() {
+            self.run_write(
+                &["exec", "resume", "--json", session_id, req.prompt.as_str()],
+                req,
+                sink,
+            )
+        } else {
+            self.run_write(&["exec", "--json", req.prompt.as_str()], req, sink)
+        }
     }
 }
 

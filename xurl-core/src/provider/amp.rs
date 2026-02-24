@@ -20,6 +20,10 @@ impl AmpProvider {
 }
 
 impl Provider for AmpProvider {
+    fn kind(&self) -> ProviderKind {
+        ProviderKind::Amp
+    }
+
     fn resolve(&self, session_id: &str) -> Result<ResolvedThread> {
         let threads_root = self.threads_root();
         let path = threads_root.join(format!("{session_id}.json"));

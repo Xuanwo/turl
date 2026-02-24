@@ -37,6 +37,19 @@
   - `skills/xurl/SKILL.md`
 - A change is not complete if runtime behavior and skill/readme docs diverge.
 
+## Documentation Audience & Style
+- Treat documentation as user-facing by default. Focus on capabilities and usage, not implementation details.
+- Do not frame docs as "what xurl is not". State what users can do and how to do it.
+- Keep wording task-oriented and action-first (for example: read, discover, start, continue, save).
+- Prefer conversation-oriented language in user docs. Use `thread/session` only when required by literal CLI syntax, URI forms, or field names.
+- `README.md` is for human users:
+  - prioritize quick onboarding, command examples, option semantics, provider capability boundaries, and troubleshooting.
+  - avoid internal architecture, backend adapter design, and code-structure explanations unless strictly necessary.
+- `skills/xurl/SKILL.md` is for agent users:
+  - prioritize execution workflow (`when to use`, `read/discover/write steps`, command rules, failure handling).
+  - provide concise decision rules that help agents choose the right command without background theory.
+- Keep `README.md` and `skills/xurl/SKILL.md` consistent in terminology, capability matrix, and command behavior.
+
 ## Minimal Change Strategy for Agents
 - Keep patches as small as possible: touch only the crate that owns the behavior, avoid cross-crate refactors unless the fix explicitly requires both `xurl-core` and `xurl-cli`.
 - Unless the user asks for new optional behavior, do not add new dependencies, features, or files; if you see adjacent concerns, surface them as follow-up items instead of folding them into the current change.

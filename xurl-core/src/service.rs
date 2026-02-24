@@ -6,10 +6,12 @@ use std::time::UNIX_EPOCH;
 use serde_json::Value;
 
 use crate::error::{Result, XurlError};
+use crate::jsonl;
 use crate::model::{
     PiEntryListItem, PiEntryListView, PiEntryQuery, ProviderKind, ResolvedThread,
     SubagentDetailView, SubagentExcerptMessage, SubagentLifecycleEvent, SubagentListItem,
     SubagentListView, SubagentQuery, SubagentRelation, SubagentThreadRef, SubagentView,
+    WriteRequest, WriteResult,
 };
 use crate::provider::amp::AmpProvider;
 use crate::provider::claude::ClaudeProvider;
@@ -17,7 +19,7 @@ use crate::provider::codex::CodexProvider;
 use crate::provider::gemini::GeminiProvider;
 use crate::provider::opencode::OpencodeProvider;
 use crate::provider::pi::PiProvider;
-use crate::provider::{Provider, ProviderRoots};
+use crate::provider::{Provider, ProviderRoots, WriteEventSink};
 use crate::render;
 use crate::uri::ThreadUri;
 
@@ -58,6 +60,22 @@ pub fn resolve_thread(uri: &ThreadUri, roots: &ProviderRoots) -> Result<Resolved
         ProviderKind::Opencode => {
             OpencodeProvider::new(&roots.opencode_root).resolve(&uri.session_id)
         }
+    }
+}
+
+pub fn write_thread(
+    provider: ProviderKind,
+    roots: &ProviderRoots,
+    req: &WriteRequest,
+    sink: &mut dyn WriteEventSink,
+) -> Result<WriteResult> {
+    match provider {
+        ProviderKind::Amp => AmpProvider::new(&roots.amp_root).write(req, sink),
+        ProviderKind::Codex => CodexProvider::new(&roots.codex_root).write(req, sink),
+        ProviderKind::Claude => ClaudeProvider::new(&roots.claude_root).write(req, sink),
+        ProviderKind::Gemini => GeminiProvider::new(&roots.gemini_root).write(req, sink),
+        ProviderKind::Pi => PiProvider::new(&roots.pi_root).write(req, sink),
+        ProviderKind::Opencode => OpencodeProvider::new(&roots.opencode_root).write(req, sink),
     }
 }
 
@@ -361,16 +379,13 @@ pub fn resolve_pi_entry_list_view(
     let mut parent_ids = BTreeSet::<String>::new();
 
     for (line_idx, line) in raw.lines().enumerate() {
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        let value = match serde_json::from_str::<Value>(line) {
-            Ok(value) => value,
+        let value = match jsonl::parse_json_line(Path::new("<pi:session>"), line_idx + 1, line) {
+            Ok(Some(value)) => value,
+            Ok(None) => continue,
             Err(err) => {
                 warnings.push(format!(
                     "failed to parse pi session line {}: {err}",
-                    line_idx + 1
+                    line_idx + 1,
                 ));
                 continue;
             }
@@ -696,8 +711,8 @@ fn infer_codex_child_status(raw: &str, path: &Path) -> Option<String> {
     let mut has_assistant_message = false;
     let mut has_error = false;
 
-    for line in raw.lines().filter(|line| !line.trim().is_empty()) {
-        let Ok(value) = serde_json::from_str::<Value>(line) else {
+    for (line_idx, line) in raw.lines().enumerate() {
+        let Ok(Some(value)) = jsonl::parse_json_line(path, line_idx + 1, line) else {
             continue;
         };
 
@@ -745,8 +760,10 @@ fn parse_codex_parent_lifecycle(
             continue;
         }
 
-        let value = match serde_json::from_str::<Value>(trimmed) {
-            Ok(value) => value,
+        let value = match jsonl::parse_json_line(Path::new("<codex:parent>"), line_idx + 1, trimmed)
+        {
+            Ok(Some(value)) => value,
+            Ok(None) => continue,
             Err(err) => {
                 warnings.push(format!(
                     "failed to parse parent rollout line {}: {err}",
@@ -1179,8 +1196,9 @@ fn analyze_claude_agent_file(
             continue;
         }
 
-        let value = match serde_json::from_str::<Value>(line) {
-            Ok(value) => value,
+        let value = match jsonl::parse_json_line(path, line_idx + 1, line) {
+            Ok(Some(value)) => value,
+            Ok(None) => continue,
             Err(err) => {
                 warnings.push(format!(
                     "failed to parse Claude agent transcript line {} in {}: {err}",
@@ -1324,10 +1342,7 @@ fn normalize_agent_id(agent_id: &str) -> String {
 
 fn extract_last_timestamp(raw: &str) -> Option<String> {
     for line in raw.lines().rev() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let Ok(value) = serde_json::from_str::<Value>(line) else {
+        let Ok(Some(value)) = jsonl::parse_json_line(Path::new("<timestamp>"), 1, line) else {
             continue;
         };
         if let Some(timestamp) = value
