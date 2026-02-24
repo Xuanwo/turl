@@ -895,7 +895,7 @@ dependencies = [
 
 [[package]]
 name = "xurl-cli"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -907,7 +907,7 @@ dependencies = [
 
 [[package]]
 name = "xurl-core"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "dirs",
  "once_cell",
