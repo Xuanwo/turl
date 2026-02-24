@@ -1023,7 +1023,7 @@ dependencies = [
 
 [[package]]
 name = "xurl-cli"
-version = "0.0.16"
+version = "0.0.17"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -1035,7 +1035,7 @@ dependencies = [
 
 [[package]]
 name = "xurl-core"
-version = "0.0.16"
+version = "0.0.17"
 dependencies = [
  "dirs",
  "grep",
