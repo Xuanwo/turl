@@ -23,7 +23,21 @@
 
 ## Install
 
-Install from npm and run directly with `npx`:
+Install from PyPI via `uv`:
+
+```bash
+uv tool install xuanwo-xurl
+xurl --help
+```
+
+Or install from PyPI via `pipx`:
+
+```bash
+pipx install xuanwo-xurl
+xurl --help
+```
+
+Or run directly from npm with `npx`:
 
 ```bash
 npx @xuanwo/xurl --help

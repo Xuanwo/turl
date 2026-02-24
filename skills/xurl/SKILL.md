@@ -9,17 +9,19 @@ Use this skill when you need to read AI agent thread content by URI.
 
 ## Installation
 
-Install `xurl` from npm:
+`xurl` is published to both PyPI (`xuanwo-xurl`) and npm (`@xuanwo/xurl`).
 
-```bash
-npx @xuanwo/xurl --help
-```
-
-Or install `xurl` from package `xuanwo-xurl` via `uv`:
+Install `xurl` from PyPI via `uv`:
 
 ```bash
 uv tool install xuanwo-xurl
 xurl --version
+```
+
+Or run directly from npm:
+
+```bash
+npx @xuanwo/xurl --help
 ```
 
 ## When to Use
