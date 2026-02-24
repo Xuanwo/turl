@@ -389,9 +389,6 @@ pub fn resolve_subagent_view(
         ProviderKind::Gemini => resolve_gemini_subagent_view(uri, roots, list),
         ProviderKind::Pi => resolve_pi_subagent_view(uri, roots, list),
         ProviderKind::Opencode => resolve_opencode_subagent_view(uri, roots, list),
-        _ => Err(XurlError::UnsupportedSubagentProvider(
-            uri.provider.to_string(),
-        )),
     }
 }
 

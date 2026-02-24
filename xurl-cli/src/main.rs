@@ -66,7 +66,6 @@ fn run(cli: Cli) -> xurl_core::Result<()> {
             | xurl_core::ProviderKind::Amp
             | xurl_core::ProviderKind::Opencode => uri.agent_id.is_some(),
             xurl_core::ProviderKind::Pi => uri.agent_id.as_deref().is_some_and(is_uuid_session_id),
-            _ => false,
         };
         let markdown = if is_subagent_drilldown {
             let head = render_thread_head_markdown(&uri, &roots)?;
