@@ -5,10 +5,11 @@ use std::{fs, io};
 use std::io::{Read, Write};
 
 use clap::Parser;
-use xurl_core::uri::is_uuid_session_id;
+use xurl_core::uri::{is_uuid_session_id, parse_collection_query_uri};
 use xurl_core::{
     ProviderKind, ProviderRoots, ThreadUri, WriteEventSink, WriteRequest, WriteResult, XurlError,
-    render_subagent_view_markdown, render_thread_head_markdown, render_thread_markdown,
+    query_threads, render_subagent_view_markdown, render_thread_head_markdown,
+    render_thread_markdown, render_thread_query_head_markdown, render_thread_query_markdown,
     resolve_subagent_view, resolve_thread, write_thread,
 };
 
@@ -53,6 +54,16 @@ fn run(cli: Cli) -> xurl_core::Result<()> {
     let roots = ProviderRoots::from_env_or_home()?;
     let output = output.as_deref();
     if data.is_empty() {
+        if let Some(query) = parse_collection_query_uri(&uri)? {
+            let result = query_threads(&query, &roots)?;
+            let output_body = if head {
+                render_thread_query_head_markdown(&result)
+            } else {
+                render_thread_query_markdown(&result)
+            };
+            return write_output(output, &output_body);
+        }
+
         let uri = ThreadUri::parse(&uri)?;
         if head {
             let head = render_thread_head_markdown(&uri, &roots)?;
