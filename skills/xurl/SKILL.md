@@ -86,10 +86,12 @@ xurl -I agents://amp/T-019c0797-c402-7389-bd80-d785c98df295
 xurl -I agents://codex/<conversation_id>
 xurl -I agents://claude/<conversation_id>
 xurl -I agents://gemini/<conversation_id>
+xurl -I agents://opencode/<conversation_id>
 xurl -I agents://pi/<session_id>
 ```
 
 Use returned `subagents` or `entries` URI for next step.
+OpenCode child linkage is validated by sqlite `session.parent_id`.
 
 ### 2.1) Drill Down Child Thread
 
