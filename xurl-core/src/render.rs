@@ -173,7 +173,7 @@ fn extract_pi_entries(
         let Some(id) = value
             .get("id")
             .and_then(Value::as_str)
-            .map(ToString::to_string)
+            .map(str::to_ascii_lowercase)
         else {
             continue;
         };
@@ -187,7 +187,7 @@ fn extract_pi_entries(
     }
 
     let leaf_id = target_entry_id
-        .map(ToString::to_string)
+        .map(str::to_ascii_lowercase)
         .or(last_entry_id)
         .unwrap_or_default();
 
@@ -216,7 +216,7 @@ fn extract_pi_entries(
         current = entry
             .get("parentId")
             .and_then(Value::as_str)
-            .map(ToString::to_string);
+            .map(str::to_ascii_lowercase);
     }
 
     path_ids.reverse();
@@ -711,6 +711,24 @@ mod tests {
 {"type":"message","id":"d1b2c3d4","parentId":"c1b2c3d4","timestamp":"2026-02-23T13:00:16.000Z","message":{"role":"assistant","content":[{"type":"text","text":"branch one done"}]}}
 {"type":"message","id":"e1b2c3d4","parentId":"b1b2c3d4","timestamp":"2026-02-23T13:00:17.000Z","message":{"role":"user","content":[{"type":"text","text":"branch two"}]}}
 {"type":"message","id":"f1b2c3d4","parentId":"e1b2c3d4","timestamp":"2026-02-23T13:00:18.000Z","message":{"role":"assistant","content":[{"type":"text","text":"branch two done"}]}}"#;
+
+        let uri = ThreadUri::parse("pi://12cb4c19-2774-4de4-a0d0-9fa32fbae29f/d1b2c3d4")
+            .expect("parse uri");
+        let output = render_markdown(&uri, Path::new("/tmp/mock"), raw).expect("render");
+
+        assert!(output.contains("branch one done"));
+        assert!(!output.contains("branch two done"));
+    }
+
+    #[test]
+    fn pi_entry_leaf_renders_requested_branch_with_uppercase_ids() {
+        let raw = r#"{"type":"session","version":3,"id":"12cb4c19-2774-4de4-a0d0-9fa32fbae29f","timestamp":"2026-02-23T13:00:12.780Z","cwd":"/tmp/project"}
+{"type":"message","id":"A1B2C3D4","parentId":null,"timestamp":"2026-02-23T13:00:13.000Z","message":{"role":"user","content":[{"type":"text","text":"root"}]}}
+{"type":"message","id":"B1B2C3D4","parentId":"A1B2C3D4","timestamp":"2026-02-23T13:00:14.000Z","message":{"role":"assistant","content":[{"type":"text","text":"root done"}]}}
+{"type":"message","id":"C1B2C3D4","parentId":"B1B2C3D4","timestamp":"2026-02-23T13:00:15.000Z","message":{"role":"user","content":[{"type":"text","text":"branch one"}]}}
+{"type":"message","id":"D1B2C3D4","parentId":"C1B2C3D4","timestamp":"2026-02-23T13:00:16.000Z","message":{"role":"assistant","content":[{"type":"text","text":"branch one done"}]}}
+{"type":"message","id":"E1B2C3D4","parentId":"B1B2C3D4","timestamp":"2026-02-23T13:00:17.000Z","message":{"role":"user","content":[{"type":"text","text":"branch two"}]}}
+{"type":"message","id":"F1B2C3D4","parentId":"E1B2C3D4","timestamp":"2026-02-23T13:00:18.000Z","message":{"role":"assistant","content":[{"type":"text","text":"branch two done"}]}}"#;
 
         let uri = ThreadUri::parse("pi://12cb4c19-2774-4de4-a0d0-9fa32fbae29f/d1b2c3d4")
             .expect("parse uri");
