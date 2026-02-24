@@ -152,10 +152,7 @@ pub fn render_thread_head_markdown(uri: &ThreadUri, roots: &ProviderRoots) -> Re
 
     match (uri.provider, uri.agent_id.as_deref()) {
         (
-            ProviderKind::Amp
-            | ProviderKind::Codex
-            | ProviderKind::Claude
-            | ProviderKind::Gemini,
+            ProviderKind::Amp | ProviderKind::Codex | ProviderKind::Claude | ProviderKind::Gemini,
             None,
         ) => {
             let resolved_main = resolve_thread(uri, roots)?;
@@ -190,10 +187,7 @@ pub fn render_thread_head_markdown(uri: &ThreadUri, roots: &ProviderRoots) -> Re
             render_warnings(&mut output, &list.warnings);
         }
         (
-            ProviderKind::Amp
-            | ProviderKind::Codex
-            | ProviderKind::Claude
-            | ProviderKind::Gemini,
+            ProviderKind::Amp | ProviderKind::Codex | ProviderKind::Claude | ProviderKind::Gemini,
             Some(_),
         ) => {
             let main_uri = main_thread_uri(uri);
