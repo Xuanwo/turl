@@ -36,6 +36,7 @@ xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 Discover child targets:
 
 ```bash
+xurl -I agents://amp/T-019c0797-c402-7389-bd80-d785c98df295
 xurl -I agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 xurl -I agents://claude/2823d1df-720a-4c31-ac55-ae8ba726721f
 xurl agents://claude/2823d1df-720a-4c31-ac55-ae8ba726721f/acompact-69d537
@@ -45,6 +46,13 @@ xurl agents://gemini/29d207db-ca7e-40ba-87f7-e14c9de60613/2b112c8a-d80a-4cff-9c8
 xurl agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f
 xurl agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f/d1b2c3d4
 xurl -I agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f
+```
+
+Drill down into a discovered child target:
+
+```bash
+xurl agents://amp/T-019c0797-c402-7389-bd80-d785c98df295/T-1abc0797-c402-7389-bd80-d785c98df295
+xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592/019c87fb-38b9-7843-92b1-832f02598495
 ```
 
 Start a new agent conversation:
@@ -105,6 +113,11 @@ agents://<provider>/<conversation_target>
 For examples:
 
 ```text
+agents://amp/<thread_id>
+agents://amp/<main_thread_id>/<child_thread_id>
 agents://codex/<conversation_id>
+agents://codex/<main_conversation_id>/<agent_id>
 agents://claude/<conversation_id>
+agents://claude/<main_conversation_id>/<agent_id>
+agents://pi/<conversation_id>/<entry_id>
 ```

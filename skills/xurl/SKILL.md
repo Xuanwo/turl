@@ -82,6 +82,7 @@ xurl agents://gemini/<conversation_id>
 ### 2) Discover
 
 ```bash
+xurl -I agents://amp/T-019c0797-c402-7389-bd80-d785c98df295
 xurl -I agents://codex/<conversation_id>
 xurl -I agents://claude/<conversation_id>
 xurl -I agents://gemini/<conversation_id>
@@ -89,6 +90,15 @@ xurl -I agents://pi/<session_id>
 ```
 
 Use returned `subagents` or `entries` URI for next step.
+
+### 2.1) Drill Down Child Thread
+
+```bash
+xurl agents://amp/T-019c0797-c402-7389-bd80-d785c98df295/T-1abc0797-c402-7389-bd80-d785c98df295
+xurl agents://codex/<main_conversation_id>/<agent_id>
+xurl agents://claude/<main_conversation_id>/<agent_id>
+xurl agents://pi/<conversation_id>/<entry_id>
+```
 
 ### 3) Write
 
@@ -146,6 +156,13 @@ Canonical:
 - `agents://pi/<session_id>`
 - `agents://pi/<session_id>/<entry_id>`
 - `agents://opencode/<session_id>`
+
+Child drill-down URI forms:
+
+- `agents://amp/<main_thread_id>/<child_thread_id>`
+- `agents://codex/<main_conversation_id>/<agent_id>`
+- `agents://claude/<main_conversation_id>/<agent_id>`
+- `agents://pi/<conversation_id>/<entry_id>`
 
 Legacy compatibility:
 

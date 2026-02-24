@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::error::{Result, XurlError};
 use crate::jsonl;
 use crate::model::{
-    PiEntryListItem, PiEntryListView, PiEntryQuery, ProviderKind, ResolvedThread,
+    MessageRole, PiEntryListItem, PiEntryListView, PiEntryQuery, ProviderKind, ResolvedThread,
     SubagentDetailView, SubagentExcerptMessage, SubagentLifecycleEvent, SubagentListItem,
     SubagentListView, SubagentQuery, SubagentRelation, SubagentThreadRef, SubagentView,
     WriteRequest, WriteResult,
@@ -74,6 +74,23 @@ struct GeminiChildRecord {
     relation_timestamp: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct AmpHandoff {
+    thread_id: String,
+    role: Option<String>,
+    timestamp: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct AmpChildAnalysis {
+    thread: SubagentThreadRef,
+    status: String,
+    status_source: String,
+    excerpt: Vec<SubagentExcerptMessage>,
+    lifecycle: Vec<SubagentLifecycleEvent>,
+    relation_evidence: Vec<String>,
+}
+
 pub fn resolve_thread(uri: &ThreadUri, roots: &ProviderRoots) -> Result<ResolvedThread> {
     match uri.provider {
         ProviderKind::Amp => AmpProvider::new(&roots.amp_root).resolve(&uri.session_id),
@@ -134,7 +151,13 @@ pub fn render_thread_head_markdown(uri: &ThreadUri, roots: &ProviderRoots) -> Re
     push_yaml_string(&mut output, "session_id", &uri.session_id);
 
     match (uri.provider, uri.agent_id.as_deref()) {
-        (ProviderKind::Codex | ProviderKind::Claude | ProviderKind::Gemini, None) => {
+        (
+            ProviderKind::Amp
+            | ProviderKind::Codex
+            | ProviderKind::Claude
+            | ProviderKind::Gemini,
+            None,
+        ) => {
             let resolved_main = resolve_thread(uri, roots)?;
             push_yaml_string(
                 &mut output,
@@ -166,7 +189,13 @@ pub fn render_thread_head_markdown(uri: &ThreadUri, roots: &ProviderRoots) -> Re
             render_pi_entries_head(&mut output, &list);
             render_warnings(&mut output, &list.warnings);
         }
-        (ProviderKind::Codex | ProviderKind::Claude | ProviderKind::Gemini, Some(_)) => {
+        (
+            ProviderKind::Amp
+            | ProviderKind::Codex
+            | ProviderKind::Claude
+            | ProviderKind::Gemini,
+            Some(_),
+        ) => {
             let main_uri = main_thread_uri(uri);
             let resolved_main = resolve_thread(&main_uri, roots)?;
 
@@ -254,6 +283,7 @@ pub fn resolve_subagent_view(
     }
 
     match uri.provider {
+        ProviderKind::Amp => resolve_amp_subagent_view(uri, roots, list),
         ProviderKind::Codex => resolve_codex_subagent_view(uri, roots, list),
         ProviderKind::Claude => resolve_claude_subagent_view(uri, roots, list),
         ProviderKind::Gemini => resolve_gemini_subagent_view(uri, roots, list),
@@ -521,6 +551,485 @@ pub fn render_pi_entry_list_markdown(view: &PiEntryListView) -> String {
     }
 
     output
+}
+
+fn resolve_amp_subagent_view(
+    uri: &ThreadUri,
+    roots: &ProviderRoots,
+    list: bool,
+) -> Result<SubagentView> {
+    let main_uri = main_thread_uri(uri);
+    let resolved_main = resolve_thread(&main_uri, roots)?;
+    let main_raw = read_thread_raw(&resolved_main.path)?;
+    let main_value =
+        serde_json::from_str::<Value>(&main_raw).map_err(|source| XurlError::InvalidJsonLine {
+            path: resolved_main.path.clone(),
+            line: 1,
+            source,
+        })?;
+
+    let mut warnings = resolved_main.metadata.warnings.clone();
+    let handoffs = extract_amp_handoffs(&main_value, "main", &mut warnings);
+
+    if list {
+        return Ok(SubagentView::List(build_amp_list_view(
+            uri, roots, &handoffs, warnings,
+        )));
+    }
+
+    let agent_id = uri
+        .agent_id
+        .clone()
+        .ok_or_else(|| XurlError::InvalidMode("missing agent id".to_string()))?;
+
+    Ok(SubagentView::Detail(build_amp_detail_view(
+        uri, roots, &agent_id, &handoffs, warnings,
+    )))
+}
+
+fn build_amp_list_view(
+    uri: &ThreadUri,
+    roots: &ProviderRoots,
+    handoffs: &[AmpHandoff],
+    mut warnings: Vec<String>,
+) -> SubagentListView {
+    let mut grouped = BTreeMap::<String, Vec<&AmpHandoff>>::new();
+    for handoff in handoffs {
+        if handoff.thread_id == uri.session_id || handoff.role.as_deref() == Some("child") {
+            continue;
+        }
+        grouped
+            .entry(handoff.thread_id.clone())
+            .or_default()
+            .push(handoff);
+    }
+
+    let mut agents = Vec::new();
+    for (agent_id, relations) in grouped {
+        let mut relation = SubagentRelation::default();
+
+        for handoff in relations {
+            match handoff.role.as_deref() {
+                Some("parent") => {
+                    relation.validated = true;
+                    push_unique(
+                        &mut relation.evidence,
+                        "main relationships includes handoff(role=parent) to child thread"
+                            .to_string(),
+                    );
+                }
+                Some(role) => {
+                    push_unique(
+                        &mut relation.evidence,
+                        format!("main relationships includes handoff(role={role}) to child thread"),
+                    );
+                }
+                None => {
+                    push_unique(
+                        &mut relation.evidence,
+                        "main relationships includes handoff(role missing) to child thread"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+
+        let mut status = if relation.validated {
+            STATUS_PENDING_INIT.to_string()
+        } else {
+            STATUS_NOT_FOUND.to_string()
+        };
+        let mut status_source = "inferred".to_string();
+        let mut last_update = None::<String>;
+        let mut child_thread = None::<SubagentThreadRef>;
+
+        if let Some(analysis) =
+            analyze_amp_child_thread(&agent_id, &uri.session_id, roots, &mut warnings)
+        {
+            for evidence in analysis.relation_evidence {
+                push_unique(&mut relation.evidence, evidence);
+            }
+            if !relation.evidence.is_empty() {
+                relation.validated = true;
+            }
+
+            status = analysis.status;
+            status_source = analysis.status_source;
+            last_update = analysis.thread.last_updated_at.clone();
+            child_thread = Some(analysis.thread);
+        }
+
+        agents.push(SubagentListItem {
+            agent_id,
+            status,
+            status_source,
+            last_update,
+            relation,
+            child_thread,
+        });
+    }
+
+    SubagentListView {
+        query: make_query(uri, None, true),
+        agents,
+        warnings,
+    }
+}
+
+fn build_amp_detail_view(
+    uri: &ThreadUri,
+    roots: &ProviderRoots,
+    agent_id: &str,
+    handoffs: &[AmpHandoff],
+    mut warnings: Vec<String>,
+) -> SubagentDetailView {
+    let mut relation = SubagentRelation::default();
+    let mut lifecycle = Vec::<SubagentLifecycleEvent>::new();
+
+    let matches = handoffs
+        .iter()
+        .filter(|handoff| handoff.thread_id == agent_id)
+        .collect::<Vec<_>>();
+
+    if matches.is_empty() {
+        warnings.push(format!(
+            "no handoff relationship found in main thread for child_thread_id={agent_id}"
+        ));
+    }
+
+    for handoff in matches {
+        match handoff.role.as_deref() {
+            Some("parent") => {
+                relation.validated = true;
+                push_unique(
+                    &mut relation.evidence,
+                    "main relationships includes handoff(role=parent) to child thread".to_string(),
+                );
+                lifecycle.push(SubagentLifecycleEvent {
+                    timestamp: handoff.timestamp.clone(),
+                    event: "handoff".to_string(),
+                    detail: "main handoff relationship discovered (role=parent)".to_string(),
+                });
+            }
+            Some(role) => {
+                push_unique(
+                    &mut relation.evidence,
+                    format!("main relationships includes handoff(role={role}) to child thread"),
+                );
+                lifecycle.push(SubagentLifecycleEvent {
+                    timestamp: handoff.timestamp.clone(),
+                    event: "handoff".to_string(),
+                    detail: format!("main handoff relationship discovered (role={role})"),
+                });
+            }
+            None => {
+                push_unique(
+                    &mut relation.evidence,
+                    "main relationships includes handoff(role missing) to child thread".to_string(),
+                );
+                lifecycle.push(SubagentLifecycleEvent {
+                    timestamp: handoff.timestamp.clone(),
+                    event: "handoff".to_string(),
+                    detail: "main handoff relationship discovered (role missing)".to_string(),
+                });
+            }
+        }
+    }
+
+    let mut child_thread = None::<SubagentThreadRef>;
+    let mut excerpt = Vec::<SubagentExcerptMessage>::new();
+    let mut status = if relation.validated {
+        STATUS_PENDING_INIT.to_string()
+    } else {
+        STATUS_NOT_FOUND.to_string()
+    };
+    let mut status_source = "inferred".to_string();
+
+    if let Some(analysis) =
+        analyze_amp_child_thread(agent_id, &uri.session_id, roots, &mut warnings)
+    {
+        for evidence in analysis.relation_evidence {
+            push_unique(&mut relation.evidence, evidence);
+        }
+        if !relation.evidence.is_empty() {
+            relation.validated = true;
+        }
+        lifecycle.extend(analysis.lifecycle);
+        status = analysis.status;
+        status_source = analysis.status_source;
+        child_thread = Some(analysis.thread);
+        excerpt = analysis.excerpt;
+    }
+
+    SubagentDetailView {
+        query: make_query(uri, Some(agent_id.to_string()), false),
+        relation,
+        lifecycle,
+        status,
+        status_source,
+        child_thread,
+        excerpt,
+        warnings,
+    }
+}
+
+fn analyze_amp_child_thread(
+    child_thread_id: &str,
+    main_thread_id: &str,
+    roots: &ProviderRoots,
+    warnings: &mut Vec<String>,
+) -> Option<AmpChildAnalysis> {
+    let resolved_child = match AmpProvider::new(&roots.amp_root).resolve(child_thread_id) {
+        Ok(resolved) => resolved,
+        Err(err) => {
+            warnings.push(format!(
+                "failed resolving amp child thread child_thread_id={child_thread_id}: {err}"
+            ));
+            return None;
+        }
+    };
+
+    let child_raw = match read_thread_raw(&resolved_child.path) {
+        Ok(raw) => raw,
+        Err(err) => {
+            warnings.push(format!(
+                "failed reading amp child thread child_thread_id={child_thread_id}: {err}"
+            ));
+            return None;
+        }
+    };
+
+    let child_value = match serde_json::from_str::<Value>(&child_raw) {
+        Ok(value) => value,
+        Err(err) => {
+            warnings.push(format!(
+                "failed parsing amp child thread {}: {err}",
+                resolved_child.path.display()
+            ));
+            return None;
+        }
+    };
+
+    let mut relation_evidence = Vec::<String>::new();
+    let mut lifecycle = Vec::<SubagentLifecycleEvent>::new();
+    for handoff in extract_amp_handoffs(&child_value, "child", warnings) {
+        if handoff.thread_id != main_thread_id {
+            continue;
+        }
+
+        match handoff.role.as_deref() {
+            Some("child") => {
+                push_unique(
+                    &mut relation_evidence,
+                    "child relationships includes handoff(role=child) back to main thread"
+                        .to_string(),
+                );
+                lifecycle.push(SubagentLifecycleEvent {
+                    timestamp: handoff.timestamp.clone(),
+                    event: "handoff_backlink".to_string(),
+                    detail: "child handoff relationship discovered (role=child)".to_string(),
+                });
+            }
+            Some(role) => {
+                push_unique(
+                    &mut relation_evidence,
+                    format!(
+                        "child relationships includes handoff(role={role}) back to main thread"
+                    ),
+                );
+                lifecycle.push(SubagentLifecycleEvent {
+                    timestamp: handoff.timestamp.clone(),
+                    event: "handoff_backlink".to_string(),
+                    detail: format!("child handoff relationship discovered (role={role})"),
+                });
+            }
+            None => {
+                push_unique(
+                    &mut relation_evidence,
+                    "child relationships includes handoff(role missing) back to main thread"
+                        .to_string(),
+                );
+                lifecycle.push(SubagentLifecycleEvent {
+                    timestamp: handoff.timestamp.clone(),
+                    event: "handoff_backlink".to_string(),
+                    detail: "child handoff relationship discovered (role missing)".to_string(),
+                });
+            }
+        }
+    }
+
+    let messages =
+        match render::extract_messages(ProviderKind::Amp, &resolved_child.path, &child_raw) {
+            Ok(messages) => messages,
+            Err(err) => {
+                warnings.push(format!(
+                    "failed extracting amp child messages from {}: {err}",
+                    resolved_child.path.display()
+                ));
+                Vec::new()
+            }
+        };
+    let has_user = messages
+        .iter()
+        .any(|message| message.role == MessageRole::User);
+    let has_assistant = messages
+        .iter()
+        .any(|message| message.role == MessageRole::Assistant);
+
+    let excerpt = messages
+        .into_iter()
+        .rev()
+        .take(3)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(|message| SubagentExcerptMessage {
+            role: message.role,
+            text: message.text,
+        })
+        .collect::<Vec<_>>();
+
+    let (status, status_source) = infer_amp_status(&child_value, has_user, has_assistant);
+    let last_updated_at = extract_amp_last_update(&child_value)
+        .or_else(|| modified_timestamp_string(&resolved_child.path));
+
+    Some(AmpChildAnalysis {
+        thread: SubagentThreadRef {
+            thread_id: child_thread_id.to_string(),
+            path: Some(resolved_child.path.display().to_string()),
+            last_updated_at,
+        },
+        status,
+        status_source,
+        excerpt,
+        lifecycle,
+        relation_evidence,
+    })
+}
+
+fn extract_amp_handoffs(
+    value: &Value,
+    source: &str,
+    warnings: &mut Vec<String>,
+) -> Vec<AmpHandoff> {
+    let mut handoffs = Vec::new();
+    for relationship in value
+        .get("relationships")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if relationship.get("type").and_then(Value::as_str) != Some("handoff") {
+            continue;
+        }
+
+        let Some(thread_id_raw) = relationship.get("threadID").and_then(Value::as_str) else {
+            warnings.push(format!(
+                "{source} thread handoff relationship missing threadID field"
+            ));
+            continue;
+        };
+        let Some(thread_id) = normalize_amp_thread_id(thread_id_raw) else {
+            warnings.push(format!(
+                "{source} thread handoff relationship has invalid threadID={thread_id_raw}"
+            ));
+            continue;
+        };
+
+        let role = relationship
+            .get("role")
+            .and_then(Value::as_str)
+            .map(|role| role.to_ascii_lowercase());
+        let timestamp = relationship
+            .get("timestamp")
+            .or_else(|| relationship.get("updatedAt"))
+            .or_else(|| relationship.get("createdAt"))
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+
+        handoffs.push(AmpHandoff {
+            thread_id,
+            role,
+            timestamp,
+        });
+    }
+
+    handoffs
+}
+
+fn normalize_amp_thread_id(thread_id: &str) -> Option<String> {
+    ThreadUri::parse(&format!("amp://{thread_id}"))
+        .ok()
+        .map(|uri| uri.session_id)
+}
+
+fn infer_amp_status(value: &Value, has_user: bool, has_assistant: bool) -> (String, String) {
+    if let Some(status) = extract_amp_status(value) {
+        return (status, "child_thread".to_string());
+    }
+    if has_assistant {
+        return (STATUS_COMPLETED.to_string(), "inferred".to_string());
+    }
+    if has_user {
+        return (STATUS_RUNNING.to_string(), "inferred".to_string());
+    }
+    (STATUS_PENDING_INIT.to_string(), "inferred".to_string())
+}
+
+fn extract_amp_status(value: &Value) -> Option<String> {
+    let status = value.get("status");
+    if let Some(status) = status {
+        if let Some(status_str) = status.as_str() {
+            return Some(status_str.to_string());
+        }
+        if let Some(status_obj) = status.as_object() {
+            for key in [
+                STATUS_PENDING_INIT,
+                STATUS_RUNNING,
+                STATUS_COMPLETED,
+                STATUS_ERRORED,
+                STATUS_SHUTDOWN,
+                STATUS_NOT_FOUND,
+            ] {
+                if status_obj.contains_key(key) {
+                    return Some(key.to_string());
+                }
+            }
+        }
+    }
+
+    value
+        .get("state")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
+fn extract_amp_last_update(value: &Value) -> Option<String> {
+    for key in ["lastUpdated", "updatedAt", "timestamp", "createdAt"] {
+        if let Some(stamp) = value.get(key).and_then(Value::as_str) {
+            return Some(stamp.to_string());
+        }
+    }
+
+    for message in value
+        .get("messages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .rev()
+    {
+        if let Some(stamp) = message.get("timestamp").and_then(Value::as_str) {
+            return Some(stamp.to_string());
+        }
+    }
+
+    None
+}
+
+fn push_unique(values: &mut Vec<String>, value: String) {
+    if !values.iter().any(|existing| existing == &value) {
+        values.push(value);
+    }
 }
 
 fn resolve_codex_subagent_view(

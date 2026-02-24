@@ -81,7 +81,8 @@ impl FromStr for ThreadUri {
         };
 
         let (id, agent_id) = match provider {
-            ProviderKind::Codex
+            ProviderKind::Amp
+            | ProviderKind::Codex
             | ProviderKind::Claude
             | ProviderKind::Gemini
             | ProviderKind::Pi => {
@@ -99,7 +100,7 @@ impl FromStr for ThreadUri {
 
                 (main_id, agent_id)
             }
-            ProviderKind::Amp | ProviderKind::Opencode => {
+            ProviderKind::Opencode => {
                 if normalized_target.contains('/') {
                     return Err(XurlError::InvalidUri(input.to_string()));
                 }
@@ -125,6 +126,13 @@ impl FromStr for ThreadUri {
             _ => {}
         }
 
+        if provider == ProviderKind::Amp
+            && let Some(agent_id) = agent_id.as_deref()
+            && !AMP_SESSION_ID_RE.is_match(agent_id)
+        {
+            return Err(XurlError::InvalidSessionId(agent_id.to_string()));
+        }
+
         let session_id = match provider {
             ProviderKind::Amp => format!("T-{}", id[2..].to_ascii_lowercase()),
             ProviderKind::Codex
@@ -135,7 +143,9 @@ impl FromStr for ThreadUri {
         };
 
         let agent_id = agent_id.map(|agent_id| {
-            if ((provider == ProviderKind::Codex || provider == ProviderKind::Gemini)
+            if provider == ProviderKind::Amp && AMP_SESSION_ID_RE.is_match(&agent_id) {
+                format!("T-{}", agent_id[2..].to_ascii_lowercase())
+            } else if ((provider == ProviderKind::Codex || provider == ProviderKind::Gemini)
                 && SESSION_ID_RE.is_match(&agent_id))
                 || (provider == ProviderKind::Pi
                     && (SESSION_ID_RE.is_match(&agent_id)
@@ -246,6 +256,34 @@ mod tests {
     }
 
     #[test]
+    fn parse_amp_subagent_uri() {
+        let uri = ThreadUri::parse(
+            "amp://T-019C0797-C402-7389-BD80-D785C98DF295/T-1ABC0797-C402-7389-BD80-D785C98DF295",
+        )
+        .expect("parse should succeed");
+        assert_eq!(uri.provider, ProviderKind::Amp);
+        assert_eq!(uri.session_id, "T-019c0797-c402-7389-bd80-d785c98df295");
+        assert_eq!(
+            uri.agent_id,
+            Some("T-1abc0797-c402-7389-bd80-d785c98df295".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_agents_amp_subagent_uri() {
+        let uri = ThreadUri::parse(
+            "agents://amp/T-019C0797-C402-7389-BD80-D785C98DF295/T-1ABC0797-C402-7389-BD80-D785C98DF295",
+        )
+        .expect("parse should succeed");
+        assert_eq!(uri.provider, ProviderKind::Amp);
+        assert_eq!(uri.session_id, "T-019c0797-c402-7389-bd80-d785c98df295");
+        assert_eq!(
+            uri.agent_id,
+            Some("T-1abc0797-c402-7389-bd80-d785c98df295".to_string())
+        );
+    }
+
+    #[test]
     fn parse_claude_subagent_uri() {
         let uri = ThreadUri::parse("claude://2823d1df-720a-4c31-ac55-ae8ba726721f/acompact-69d537")
             .expect("parse should succeed");
@@ -262,9 +300,18 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_path_for_amp() {
+    fn parse_rejects_invalid_child_id_for_amp() {
         let err = ThreadUri::parse("amp://T-019c0797-c402-7389-bd80-d785c98df295/child")
             .expect_err("must reject amp path segment");
+        assert!(format!("{err}").contains("invalid session id"));
+    }
+
+    #[test]
+    fn parse_rejects_extra_path_segments_for_amp() {
+        let err = ThreadUri::parse(
+            "amp://T-019c0797-c402-7389-bd80-d785c98df295/T-1abc0797-c402-7389-bd80-d785c98df295/extra",
+        )
+        .expect_err("must reject nested path");
         assert!(format!("{err}").contains("invalid uri"));
     }
 

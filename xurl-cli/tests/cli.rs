@@ -12,6 +12,7 @@ const SUBAGENT_ID: &str = "019c87fb-38b9-7843-92b1-832f02598495";
 const REAL_FIXTURE_MAIN_ID: &str = "55fe4488-c6bd-46fa-9390-dab3b8860b95";
 const REAL_FIXTURE_AGENT_ID: &str = "29bf19c3-b83e-401d-8f38-5660b7f67152";
 const AMP_SESSION_ID: &str = "T-019c0797-c402-7389-bd80-d785c98df295";
+const AMP_SUBAGENT_ID: &str = "T-1abc0797-c402-7389-bd80-d785c98df295";
 const GEMINI_SESSION_ID: &str = "29d207db-ca7e-40ba-87f7-e14c9de60613";
 const GEMINI_CHILD_SESSION_ID: &str = "2b112c8a-d80a-4cff-9c8a-6f3e6fbaf7fb";
 const GEMINI_MISSING_CHILD_SESSION_ID: &str = "62f9f98d-c578-4d3a-b4bf-3aaed19889d6";
@@ -58,6 +59,46 @@ fn setup_amp_tree() -> tempfile::TempDir {
     )
     .expect("write");
     temp
+}
+
+fn setup_amp_subagent_tree_with_role(main_role: Option<&str>) -> tempfile::TempDir {
+    let temp = tempdir().expect("tempdir");
+    let main_path = temp
+        .path()
+        .join(format!("amp/threads/{AMP_SESSION_ID}.json"));
+    fs::create_dir_all(main_path.parent().expect("parent")).expect("mkdir");
+    let role_field = main_role
+        .map(|role| format!(r#","role":"{role}""#))
+        .unwrap_or_default();
+    fs::write(
+        &main_path,
+        format!(
+            r#"{{"id":"{AMP_SESSION_ID}","status":"running","updatedAt":"2026-02-23T00:00:03Z","messages":[{{"role":"user","timestamp":"2026-02-23T00:00:00Z","content":[{{"type":"text","text":"main task"}}]}}],"relationships":[{{"type":"handoff","threadID":"{AMP_SUBAGENT_ID}"{role_field},"timestamp":"2026-02-23T00:00:02Z"}}]}}"#
+        ),
+    )
+    .expect("write main");
+
+    let child_path = temp
+        .path()
+        .join(format!("amp/threads/{AMP_SUBAGENT_ID}.json"));
+    fs::create_dir_all(child_path.parent().expect("parent")).expect("mkdir");
+    fs::write(
+        &child_path,
+        format!(
+            r#"{{"id":"{AMP_SUBAGENT_ID}","status":"completed","lastUpdated":"2026-02-23T00:00:14Z","messages":[{{"role":"user","timestamp":"2026-02-23T00:00:11Z","content":[{{"type":"text","text":"hello child"}}]}},{{"role":"assistant","timestamp":"2026-02-23T00:00:12Z","content":[{{"type":"text","text":"done child"}}]}}],"relationships":[{{"type":"handoff","threadID":"{AMP_SESSION_ID}","role":"child","timestamp":"2026-02-23T00:00:12Z"}}]}}"#
+        ),
+    )
+    .expect("write child");
+
+    temp
+}
+
+fn setup_amp_subagent_tree() -> tempfile::TempDir {
+    setup_amp_subagent_tree_with_role(Some("parent"))
+}
+
+fn setup_amp_subagent_tree_missing_role() -> tempfile::TempDir {
+    setup_amp_subagent_tree_with_role(None)
 }
 
 fn setup_codex_subagent_tree() -> tempfile::TempDir {
@@ -300,6 +341,14 @@ fn agents_codex_deeplink_uri() -> String {
 
 fn amp_uri() -> String {
     format!("amp://{AMP_SESSION_ID}")
+}
+
+fn amp_subagent_uri() -> String {
+    format!("amp://{AMP_SESSION_ID}/{AMP_SUBAGENT_ID}")
+}
+
+fn agents_amp_subagent_uri() -> String {
+    format!("agents://amp/{AMP_SESSION_ID}/{AMP_SUBAGENT_ID}")
 }
 
 fn codex_subagent_uri() -> String {
@@ -685,6 +734,88 @@ fn amp_outputs_markdown() {
         .stdout(predicate::str::contains("hello"))
         .stdout(predicate::str::contains("analyze"))
         .stdout(predicate::str::contains("world"));
+}
+
+#[test]
+fn amp_head_outputs_subagent_index() {
+    let temp = setup_amp_subagent_tree();
+    let subagent_uri = agents_child_uri("amp", AMP_SESSION_ID, AMP_SUBAGENT_ID);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("XDG_DATA_HOME", temp.path())
+        .env("CODEX_HOME", temp.path().join("missing-codex"))
+        .env("CLAUDE_CONFIG_DIR", temp.path().join("missing-claude"))
+        .arg(agents_uri("amp", AMP_SESSION_ID))
+        .arg("--head")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("mode: 'subagent_index'"))
+        .stdout(predicate::str::contains("subagents:"))
+        .stdout(predicate::str::contains(subagent_uri))
+        .stdout(predicate::str::contains("# Subagent Status").not());
+}
+
+#[test]
+fn amp_head_discovery_supports_missing_role_fallback() {
+    let temp = setup_amp_subagent_tree_missing_role();
+    let subagent_uri = agents_child_uri("amp", AMP_SESSION_ID, AMP_SUBAGENT_ID);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("XDG_DATA_HOME", temp.path())
+        .env("CODEX_HOME", temp.path().join("missing-codex"))
+        .env("CLAUDE_CONFIG_DIR", temp.path().join("missing-claude"))
+        .arg(agents_uri("amp", AMP_SESSION_ID))
+        .arg("--head")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("mode: 'subagent_index'"))
+        .stdout(predicate::str::contains("subagents:"))
+        .stdout(predicate::str::contains(subagent_uri));
+}
+
+#[test]
+fn amp_subagent_head_outputs_header_only() {
+    let temp = setup_amp_subagent_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("XDG_DATA_HOME", temp.path())
+        .env("CODEX_HOME", temp.path().join("missing-codex"))
+        .env("CLAUDE_CONFIG_DIR", temp.path().join("missing-claude"))
+        .arg(amp_subagent_uri())
+        .arg("--head")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("mode: 'subagent_detail'"))
+        .stdout(predicate::str::contains(format!(
+            "agent_id: '{AMP_SUBAGENT_ID}'"
+        )))
+        .stdout(predicate::str::contains("status:"))
+        .stdout(predicate::str::contains("# Subagent Thread").not());
+}
+
+#[test]
+fn amp_subagent_outputs_markdown_view() {
+    let temp = setup_amp_subagent_tree();
+    let main_uri = agents_uri("amp", AMP_SESSION_ID);
+    let subagent_uri = agents_child_uri("amp", AMP_SESSION_ID, AMP_SUBAGENT_ID);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("XDG_DATA_HOME", temp.path())
+        .env("CODEX_HOME", temp.path().join("missing-codex"))
+        .env("CLAUDE_CONFIG_DIR", temp.path().join("missing-claude"))
+        .arg(agents_amp_subagent_uri())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Subagent Thread"))
+        .stdout(predicate::str::contains(format!(
+            "- Main Thread: `{main_uri}`"
+        )))
+        .stdout(predicate::str::contains(format!(
+            "- Subagent Thread: `{subagent_uri}`"
+        )))
+        .stdout(predicate::str::contains("- Relation: `validated`"))
+        .stdout(predicate::str::contains("## Lifecycle (Parent Thread)"))
+        .stdout(predicate::str::contains("## Thread Excerpt (Child Thread)"));
 }
 
 #[test]
