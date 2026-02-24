@@ -5,6 +5,7 @@ use std::{fs, io};
 use std::io::{Read, Write};
 
 use clap::Parser;
+use xurl_core::uri::is_uuid_session_id;
 use xurl_core::{
     ProviderKind, ProviderRoots, ThreadUri, WriteEventSink, WriteRequest, WriteResult, XurlError,
     render_subagent_view_markdown, render_thread_head_markdown, render_thread_markdown,
@@ -14,7 +15,7 @@ use xurl_core::{
 #[derive(Debug, Parser)]
 #[command(name = "xurl", version, about = "Resolve and read code-agent threads")]
 struct Cli {
-    /// Thread URI like agents://codex/<session_id>, agents://claude/<session_id>, agents://pi/<session_id>/<entry_id>, or legacy forms like codex://<session_id>
+    /// Thread URI like agents://codex/<session_id>, agents://claude/<session_id>, agents://pi/<session_id>/<child_or_entry_id>, or legacy forms like codex://<session_id>
     uri: String,
 
     /// Output frontmatter only (header mode)
@@ -58,14 +59,15 @@ fn run(cli: Cli) -> xurl_core::Result<()> {
             return write_output(output, &head);
         }
 
-        let markdown = if matches!(
-            uri.provider,
+        let is_subagent_drilldown = match uri.provider {
             xurl_core::ProviderKind::Codex
-                | xurl_core::ProviderKind::Claude
-                | xurl_core::ProviderKind::Gemini
-                | xurl_core::ProviderKind::Amp
-        ) && uri.agent_id.is_some()
-        {
+            | xurl_core::ProviderKind::Claude
+            | xurl_core::ProviderKind::Gemini
+            | xurl_core::ProviderKind::Amp => uri.agent_id.is_some(),
+            xurl_core::ProviderKind::Pi => uri.agent_id.as_deref().is_some_and(is_uuid_session_id),
+            _ => false,
+        };
+        let markdown = if is_subagent_drilldown {
             let head = render_thread_head_markdown(&uri, &roots)?;
             let view = resolve_subagent_view(&uri, &roots, false)?;
             let body = render_subagent_view_markdown(&view);

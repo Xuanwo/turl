@@ -97,6 +97,7 @@ Use returned `subagents` or `entries` URI for next step.
 xurl agents://amp/T-019c0797-c402-7389-bd80-d785c98df295/T-1abc0797-c402-7389-bd80-d785c98df295
 xurl agents://codex/<main_conversation_id>/<agent_id>
 xurl agents://claude/<main_conversation_id>/<agent_id>
+xurl agents://pi/<conversation_id>/<child_session_id>
 xurl agents://pi/<conversation_id>/<entry_id>
 ```
 
@@ -177,6 +178,11 @@ Legacy compatibility:
 - `pi://<session_id>`
 - `pi://<session_id>/<entry_id>`
 - `opencode://<session_id>`
+
+Pi child forms:
+
+- `agents://pi/<main_session_id>/<child_session_id>`: UUID child session drill-down
+- `agents://pi/<session_id>/<entry_id>`: entry-based branch drill-down
 
 ## Failure Handling
 

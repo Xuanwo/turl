@@ -91,6 +91,52 @@ struct AmpChildAnalysis {
     relation_evidence: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum PiSessionHintKind {
+    Parent,
+    Child,
+}
+
+#[derive(Debug, Clone)]
+struct PiSessionHint {
+    kind: PiSessionHintKind,
+    session_id: String,
+    evidence: String,
+}
+
+#[derive(Debug, Clone)]
+struct PiSessionRecord {
+    session_id: String,
+    path: PathBuf,
+    last_update: Option<String>,
+    hints: Vec<PiSessionHint>,
+}
+
+#[derive(Debug, Clone)]
+struct PiDiscoveredChild {
+    relation: SubagentRelation,
+    status: String,
+    status_source: String,
+    last_update: Option<String>,
+    child_thread: Option<SubagentThreadRef>,
+    excerpt: Vec<SubagentExcerptMessage>,
+    warnings: Vec<String>,
+}
+
+impl Default for PiDiscoveredChild {
+    fn default() -> Self {
+        Self {
+            relation: SubagentRelation::default(),
+            status: STATUS_NOT_FOUND.to_string(),
+            status_source: "inferred".to_string(),
+            last_update: None,
+            child_thread: None,
+            excerpt: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+}
+
 pub fn resolve_thread(uri: &ThreadUri, roots: &ProviderRoots) -> Result<ResolvedThread> {
     match uri.provider {
         ProviderKind::Amp => AmpProvider::new(&roots.amp_root).resolve(&uri.session_id),
@@ -184,7 +230,14 @@ pub fn render_thread_head_markdown(uri: &ThreadUri, roots: &ProviderRoots) -> Re
 
             let list = resolve_pi_entry_list_view(uri, roots)?;
             render_pi_entries_head(&mut output, &list);
-            render_warnings(&mut output, &list.warnings);
+            let mut warnings = list.warnings;
+
+            if let SubagentView::List(subagents) = resolve_subagent_view(uri, roots, true)? {
+                render_subagents_head(&mut output, &subagents);
+                warnings.extend(subagents.warnings);
+            }
+
+            render_warnings(&mut output, &warnings);
         }
         (
             ProviderKind::Amp | ProviderKind::Codex | ProviderKind::Claude | ProviderKind::Gemini,
@@ -216,6 +269,42 @@ pub fn render_thread_head_markdown(uri: &ThreadUri, roots: &ProviderRoots) -> Re
                         ),
                     );
                 }
+                push_yaml_string(&mut output, "status", &detail.status);
+                push_yaml_string(&mut output, "status_source", &detail.status_source);
+
+                if let Some(child_thread) = &detail.child_thread {
+                    push_yaml_string(&mut output, "child_thread_id", &child_thread.thread_id);
+                    if let Some(path) = &child_thread.path {
+                        push_yaml_string(&mut output, "child_thread_source", path);
+                    }
+                    if let Some(last_updated_at) = &child_thread.last_updated_at {
+                        push_yaml_string(&mut output, "child_last_updated_at", last_updated_at);
+                    }
+                }
+
+                render_warnings(&mut output, &detail.warnings);
+            }
+        }
+        (ProviderKind::Pi, Some(agent_id)) if is_uuid_session_id(agent_id) => {
+            let main_uri = main_thread_uri(uri);
+            let resolved_main = resolve_thread(&main_uri, roots)?;
+
+            let view = resolve_subagent_view(uri, roots, false)?;
+            if let SubagentView::Detail(detail) = view {
+                let thread_source = detail
+                    .child_thread
+                    .as_ref()
+                    .and_then(|thread| thread.path.as_deref())
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| resolved_main.path.display().to_string());
+                push_yaml_string(&mut output, "thread_source", &thread_source);
+                push_yaml_string(&mut output, "mode", "subagent_detail");
+                push_yaml_string(&mut output, "agent_id", agent_id);
+                push_yaml_string(
+                    &mut output,
+                    "subagent_uri",
+                    &agents_thread_uri(uri.provider.as_str(), &uri.session_id, Some(agent_id)),
+                );
                 push_yaml_string(&mut output, "status", &detail.status);
                 push_yaml_string(&mut output, "status_source", &detail.status_source);
 
@@ -281,6 +370,7 @@ pub fn resolve_subagent_view(
         ProviderKind::Codex => resolve_codex_subagent_view(uri, roots, list),
         ProviderKind::Claude => resolve_claude_subagent_view(uri, roots, list),
         ProviderKind::Gemini => resolve_gemini_subagent_view(uri, roots, list),
+        ProviderKind::Pi => resolve_pi_subagent_view(uri, roots, list),
         _ => Err(XurlError::UnsupportedSubagentProvider(
             uri.provider.to_string(),
         )),
@@ -546,6 +636,499 @@ pub fn render_pi_entry_list_markdown(view: &PiEntryListView) -> String {
 
     output
 }
+
+fn resolve_pi_subagent_view(
+    uri: &ThreadUri,
+    roots: &ProviderRoots,
+    list: bool,
+) -> Result<SubagentView> {
+    if uri.provider != ProviderKind::Pi {
+        return Err(XurlError::InvalidMode(
+            "pi child-session view requires agents://pi/<main_session_id>/<child_session_id>"
+                .to_string(),
+        ));
+    }
+
+    if !list
+        && uri
+            .agent_id
+            .as_deref()
+            .is_some_and(|agent_id| !is_uuid_session_id(agent_id))
+    {
+        return Err(XurlError::InvalidMode(
+            "pi child-session drill-down requires UUID child_session_id".to_string(),
+        ));
+    }
+
+    let main_uri = main_thread_uri(uri);
+    let resolved_main = resolve_thread(&main_uri, roots)?;
+    let mut warnings = resolved_main.metadata.warnings.clone();
+
+    let records = discover_pi_session_records(&roots.pi_root, &mut warnings);
+    let main_record = records.get(&uri.session_id);
+    let mut discovered = discover_pi_children(&uri.session_id, main_record, &records);
+
+    if list {
+        warnings.extend(
+            discovered
+                .values()
+                .flat_map(|child| child.warnings.clone())
+                .collect::<Vec<_>>(),
+        );
+
+        let agents = discovered
+            .into_iter()
+            .map(|(agent_id, child)| SubagentListItem {
+                agent_id: agent_id.clone(),
+                status: child.status,
+                status_source: child.status_source,
+                last_update: child.last_update,
+                relation: child.relation,
+                child_thread: child.child_thread,
+            })
+            .collect();
+
+        return Ok(SubagentView::List(SubagentListView {
+            query: make_query(uri, None, true),
+            agents,
+            warnings,
+        }));
+    }
+
+    let requested_agent = uri
+        .agent_id
+        .clone()
+        .ok_or_else(|| XurlError::InvalidMode("missing child session id".to_string()))?;
+
+    if let Some(child) = discovered.remove(&requested_agent) {
+        warnings.extend(child.warnings.clone());
+        let lifecycle = child
+            .relation
+            .evidence
+            .iter()
+            .map(|evidence| SubagentLifecycleEvent {
+                timestamp: child.last_update.clone(),
+                event: "session_relation_hint".to_string(),
+                detail: evidence.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        return Ok(SubagentView::Detail(SubagentDetailView {
+            query: make_query(uri, Some(requested_agent), false),
+            relation: child.relation,
+            lifecycle,
+            status: child.status,
+            status_source: child.status_source,
+            child_thread: child.child_thread,
+            excerpt: child.excerpt,
+            warnings,
+        }));
+    }
+
+    if let Some(record) = records.get(&requested_agent) {
+        warnings.push(format!(
+            "child session file exists but no relation hint links it to main_session_id={} (child path: {})",
+            uri.session_id,
+            record.path.display()
+        ));
+    } else {
+        warnings.push(format!(
+            "child session not found for main_session_id={} child_session_id={requested_agent}",
+            uri.session_id
+        ));
+    }
+
+    Ok(SubagentView::Detail(SubagentDetailView {
+        query: make_query(uri, Some(requested_agent), false),
+        relation: SubagentRelation::default(),
+        lifecycle: Vec::new(),
+        status: STATUS_NOT_FOUND.to_string(),
+        status_source: "inferred".to_string(),
+        child_thread: None,
+        excerpt: Vec::new(),
+        warnings,
+    }))
+}
+
+fn discover_pi_children(
+    main_session_id: &str,
+    main_record: Option<&PiSessionRecord>,
+    records: &BTreeMap<String, PiSessionRecord>,
+) -> BTreeMap<String, PiDiscoveredChild> {
+    let mut children = BTreeMap::<String, PiDiscoveredChild>::new();
+
+    for record in records.values() {
+        for hint in record.hints.iter().filter(|hint| {
+            hint.kind == PiSessionHintKind::Parent && hint.session_id == main_session_id
+        }) {
+            let child = children
+                .entry(record.session_id.clone())
+                .or_insert_with(PiDiscoveredChild::default);
+            child.relation.validated = true;
+            child.relation.evidence.push(format!(
+                "{} (from {})",
+                hint.evidence,
+                record.path.display()
+            ));
+            child.last_update = child
+                .last_update
+                .clone()
+                .or_else(|| record.last_update.clone());
+            child.child_thread = Some(SubagentThreadRef {
+                thread_id: record.session_id.clone(),
+                path: Some(record.path.display().to_string()),
+                last_updated_at: record.last_update.clone(),
+            });
+        }
+    }
+
+    if let Some(main_record) = main_record {
+        for hint in main_record
+            .hints
+            .iter()
+            .filter(|hint| hint.kind == PiSessionHintKind::Child)
+        {
+            let child = children
+                .entry(hint.session_id.clone())
+                .or_insert_with(PiDiscoveredChild::default);
+            child.relation.validated = true;
+            child.relation.evidence.push(format!(
+                "{} (from {})",
+                hint.evidence,
+                main_record.path.display()
+            ));
+
+            if let Some(record) = records.get(&hint.session_id) {
+                child.last_update = child
+                    .last_update
+                    .clone()
+                    .or_else(|| record.last_update.clone());
+                child.child_thread = Some(SubagentThreadRef {
+                    thread_id: record.session_id.clone(),
+                    path: Some(record.path.display().to_string()),
+                    last_updated_at: record.last_update.clone(),
+                });
+            } else {
+                child.status = STATUS_NOT_FOUND.to_string();
+                child.status_source = "inferred".to_string();
+                child.warnings.push(format!(
+                    "relation hint references child_session_id={} but transcript file is missing for main_session_id={} ({})",
+                    hint.session_id, main_session_id, hint.evidence
+                ));
+            }
+        }
+    }
+
+    for (child_id, child) in &mut children {
+        let Some(path) = child
+            .child_thread
+            .as_ref()
+            .and_then(|thread| thread.path.as_deref())
+            .map(ToString::to_string)
+        else {
+            continue;
+        };
+
+        match read_thread_raw(Path::new(&path)) {
+            Ok(raw) => {
+                if child.last_update.is_none() {
+                    child.last_update = extract_last_timestamp(&raw);
+                }
+
+                let messages = render::extract_messages(ProviderKind::Pi, Path::new(&path), &raw)
+                    .unwrap_or_default();
+
+                let has_assistant = messages
+                    .iter()
+                    .any(|message| matches!(message.role, crate::model::MessageRole::Assistant));
+                let has_user = messages
+                    .iter()
+                    .any(|message| matches!(message.role, crate::model::MessageRole::User));
+
+                child.status = if has_assistant {
+                    STATUS_COMPLETED.to_string()
+                } else if has_user {
+                    STATUS_RUNNING.to_string()
+                } else {
+                    STATUS_PENDING_INIT.to_string()
+                };
+                child.status_source = "child_rollout".to_string();
+                child.excerpt = messages
+                    .into_iter()
+                    .rev()
+                    .take(3)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .map(|message| SubagentExcerptMessage {
+                        role: message.role,
+                        text: message.text,
+                    })
+                    .collect();
+            }
+            Err(err) => {
+                child.status = STATUS_NOT_FOUND.to_string();
+                child.status_source = "inferred".to_string();
+                child.warnings.push(format!(
+                    "failed to read child session transcript for child_session_id={child_id}: {err}"
+                ));
+            }
+        }
+    }
+
+    children
+}
+
+fn discover_pi_session_records(
+    pi_root: &Path,
+    warnings: &mut Vec<String>,
+) -> BTreeMap<String, PiSessionRecord> {
+    let sessions_root = pi_root.join("sessions");
+    if !sessions_root.exists() {
+        return BTreeMap::new();
+    }
+
+    let mut latest = BTreeMap::<String, (u64, PiSessionRecord)>::new();
+    for entry in WalkDir::new(&sessions_root)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext == "jsonl")
+        })
+    {
+        let path = entry.path();
+        let Some(record) = parse_pi_session_record(path, warnings) else {
+            continue;
+        };
+
+        let stamp = file_modified_epoch(path).unwrap_or(0);
+        match latest.get(&record.session_id) {
+            Some((existing_stamp, existing)) => {
+                if stamp > *existing_stamp {
+                    warnings.push(format!(
+                        "multiple pi transcripts found for session_id={}; selected latest: {}",
+                        record.session_id,
+                        record.path.display()
+                    ));
+                    latest.insert(record.session_id.clone(), (stamp, record));
+                } else {
+                    warnings.push(format!(
+                        "multiple pi transcripts found for session_id={}; kept latest: {}",
+                        existing.session_id,
+                        existing.path.display()
+                    ));
+                }
+            }
+            None => {
+                latest.insert(record.session_id.clone(), (stamp, record));
+            }
+        }
+    }
+
+    latest
+        .into_values()
+        .map(|(_, record)| (record.session_id.clone(), record))
+        .collect()
+}
+
+fn parse_pi_session_record(path: &Path, warnings: &mut Vec<String>) -> Option<PiSessionRecord> {
+    let raw = match read_thread_raw(path) {
+        Ok(raw) => raw,
+        Err(err) => {
+            warnings.push(format!(
+                "failed to read pi session transcript {}: {err}",
+                path.display()
+            ));
+            return None;
+        }
+    };
+
+    let Some(first_non_empty) = raw.lines().find(|line| !line.trim().is_empty()) else {
+        return None;
+    };
+
+    let header = match serde_json::from_str::<Value>(first_non_empty) {
+        Ok(value) => value,
+        Err(err) => {
+            warnings.push(format!(
+                "failed to parse pi session header {}: {err}",
+                path.display()
+            ));
+            return None;
+        }
+    };
+
+    if header.get("type").and_then(Value::as_str) != Some("session") {
+        return None;
+    }
+
+    let Some(session_id) = header
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::to_ascii_lowercase)
+    else {
+        warnings.push(format!(
+            "pi session header missing id in {}",
+            path.display()
+        ));
+        return None;
+    };
+
+    if !is_uuid_session_id(&session_id) {
+        warnings.push(format!(
+            "pi session header id is not UUID in {}: {}",
+            path.display(),
+            session_id
+        ));
+        return None;
+    }
+
+    let hints = collect_pi_session_hints(&header);
+    let last_update = header
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .or_else(|| modified_timestamp_string(path));
+
+    Some(PiSessionRecord {
+        session_id,
+        path: path.to_path_buf(),
+        last_update,
+        hints,
+    })
+}
+
+fn collect_pi_session_hints(header: &Value) -> Vec<PiSessionHint> {
+    let mut hints = Vec::new();
+    collect_pi_session_hints_rec(header, "", &mut hints);
+
+    let mut seen = BTreeSet::new();
+    hints
+        .into_iter()
+        .filter(|hint| seen.insert((hint.kind, hint.session_id.clone(), hint.evidence.clone())))
+        .collect()
+}
+
+fn collect_pi_session_hints_rec(value: &Value, path: &str, out: &mut Vec<PiSessionHint>) {
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                let key_path = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+
+                if let Some(kind) = classify_pi_hint_key(key) {
+                    let mut ids = Vec::new();
+                    collect_uuid_strings(child, &mut ids);
+                    for session_id in ids {
+                        out.push(PiSessionHint {
+                            kind,
+                            session_id,
+                            evidence: format!("session header key `{key_path}`"),
+                        });
+                    }
+                }
+
+                collect_pi_session_hints_rec(child, &key_path, out);
+            }
+        }
+        Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                let key_path = format!("{path}[{index}]");
+                collect_pi_session_hints_rec(child, &key_path, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn classify_pi_hint_key(key: &str) -> Option<PiSessionHintKind> {
+    let normalized = normalize_hint_key(key);
+
+    const PARENT_HINTS: &[&str] = &[
+        "parentsessionid",
+        "parentsessionids",
+        "parentthreadid",
+        "parentthreadids",
+        "mainsessionid",
+        "rootsessionid",
+        "parentid",
+    ];
+    const CHILD_HINTS: &[&str] = &[
+        "childsessionid",
+        "childsessionids",
+        "childthreadid",
+        "childthreadids",
+        "childid",
+        "subsessionid",
+        "subsessionids",
+        "subagentsessionid",
+        "subagentsessionids",
+        "subagentthreadid",
+        "subagentthreadids",
+    ];
+
+    if PARENT_HINTS.contains(&normalized.as_str()) {
+        return Some(PiSessionHintKind::Parent);
+    }
+    if CHILD_HINTS.contains(&normalized.as_str()) {
+        return Some(PiSessionHintKind::Child);
+    }
+
+    let has_session_scope = normalized.contains("session") || normalized.contains("thread");
+    if has_session_scope
+        && (normalized.contains("parent")
+            || normalized.contains("main")
+            || normalized.contains("root"))
+    {
+        return Some(PiSessionHintKind::Parent);
+    }
+    if has_session_scope
+        && (normalized.contains("child")
+            || normalized.contains("subagent")
+            || normalized.contains("subsession"))
+    {
+        return Some(PiSessionHintKind::Child);
+    }
+
+    None
+}
+
+fn normalize_hint_key(key: &str) -> String {
+    key.chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn collect_uuid_strings(value: &Value, ids: &mut Vec<String>) {
+    match value {
+        Value::String(text) => {
+            if is_uuid_session_id(text) {
+                ids.push(text.to_ascii_lowercase());
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_uuid_strings(item, ids);
+            }
+        }
+        Value::Object(map) => {
+            for item in map.values() {
+                collect_uuid_strings(item, ids);
+            }
+        }
+        _ => {}
+    }
+}
+
 
 fn resolve_amp_subagent_view(
     uri: &ThreadUri,

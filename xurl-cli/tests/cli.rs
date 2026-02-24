@@ -19,6 +19,8 @@ const GEMINI_MISSING_CHILD_SESSION_ID: &str = "62f9f98d-c578-4d3a-b4bf-3aaed1988
 const GEMINI_REAL_SESSION_ID: &str = "da2ab190-85f8-4d5c-bcce-8292921a33bf";
 const PI_SESSION_ID: &str = "12cb4c19-2774-4de4-a0d0-9fa32fbae29f";
 const PI_ENTRY_ID: &str = "d1b2c3d4";
+const PI_CHILD_SESSION_ID: &str = "72b3a4a8-4f08-40af-8d7f-8b2c77584e89";
+const PI_MISSING_CHILD_SESSION_ID: &str = "b200f2f0-5291-4b89-a1e7-7c6a95f11011";
 const PI_REAL_SESSION_ID: &str = "bc6ea3d9-0e40-4942-a490-3e0aa7f125de";
 const CLAUDE_SESSION_ID: &str = "2823d1df-720a-4c31-ac55-ae8ba726721f";
 const CLAUDE_AGENT_ID: &str = "acompact-69d537";
@@ -303,6 +305,35 @@ fn setup_pi_tree() -> tempfile::TempDir {
     temp
 }
 
+fn setup_pi_tree_with_child_sessions() -> tempfile::TempDir {
+    let temp = tempdir().expect("tempdir");
+    let main_thread_path = temp.path().join(
+        "agent/sessions/--Users-xuanwo-Code-pi-project--/2026-02-23T13-00-12-780Z_12cb4c19-2774-4de4-a0d0-9fa32fbae29f.jsonl",
+    );
+    fs::create_dir_all(main_thread_path.parent().expect("parent")).expect("mkdir");
+    fs::write(
+        &main_thread_path,
+        format!(
+            "{{\"type\":\"session\",\"version\":3,\"id\":\"{PI_SESSION_ID}\",\"timestamp\":\"2026-02-23T13:00:12.780Z\",\"cwd\":\"/tmp/project\",\"childSessionIds\":[\"{PI_CHILD_SESSION_ID}\",\"{PI_MISSING_CHILD_SESSION_ID}\"]}}\n{{\"type\":\"message\",\"id\":\"a1b2c3d4\",\"parentId\":null,\"timestamp\":\"2026-02-23T13:00:13.000Z\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"root\"}}]}}}}\n{{\"type\":\"message\",\"id\":\"b1b2c3d4\",\"parentId\":\"a1b2c3d4\",\"timestamp\":\"2026-02-23T13:00:14.000Z\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"root done\"}}]}}}}\n"
+        ),
+    )
+    .expect("write main");
+
+    let child_thread_path = temp.path().join(format!(
+        "agent/sessions/--Users-xuanwo-Code-pi-project--/2026-02-23T13-10-12-780Z_{PI_CHILD_SESSION_ID}.jsonl"
+    ));
+    fs::create_dir_all(child_thread_path.parent().expect("parent")).expect("mkdir");
+    fs::write(
+        &child_thread_path,
+        format!(
+            "{{\"type\":\"session\",\"version\":3,\"id\":\"{PI_CHILD_SESSION_ID}\",\"timestamp\":\"2026-02-23T13:10:12.780Z\",\"cwd\":\"/tmp/project\",\"parent_session_id\":\"{PI_SESSION_ID}\"}}\n{{\"type\":\"message\",\"id\":\"b1c2d3e4\",\"parentId\":null,\"timestamp\":\"2026-02-23T13:10:13.000Z\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"child prompt\"}}]}}}}\n{{\"type\":\"message\",\"id\":\"c1d2e3f4\",\"parentId\":\"b1c2d3e4\",\"timestamp\":\"2026-02-23T13:10:14.000Z\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"child done\"}}]}}}}\n"
+        ),
+    )
+    .expect("write child");
+
+    temp
+}
+
 fn codex_real_fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex_real_sanitized")
 }
@@ -393,6 +424,14 @@ fn pi_uri() -> String {
 
 fn pi_entry_uri() -> String {
     format!("pi://{PI_SESSION_ID}/{PI_ENTRY_ID}")
+}
+
+fn pi_child_session_uri() -> String {
+    format!("pi://{PI_SESSION_ID}/{PI_CHILD_SESSION_ID}")
+}
+
+fn pi_missing_child_session_uri() -> String {
+    format!("pi://{PI_SESSION_ID}/{PI_MISSING_CHILD_SESSION_ID}")
 }
 
 fn pi_real_uri() -> String {
@@ -960,6 +999,91 @@ fn pi_head_outputs_entries() {
             "uri: 'agents://pi/{PI_SESSION_ID}/a1b2c3d4'"
         )))
         .stdout(predicate::str::contains("is_leaf: true"));
+}
+
+#[test]
+fn pi_head_outputs_entries_and_child_sessions() {
+    let temp = setup_pi_tree_with_child_sessions();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PI_CODING_AGENT_DIR", temp.path().join("agent"))
+        .arg(pi_uri())
+        .arg("--head")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("mode: 'pi_entry_index'"))
+        .stdout(predicate::str::contains("entries:"))
+        .stdout(predicate::str::contains("subagents:"))
+        .stdout(predicate::str::contains(format!(
+            "uri: 'agents://pi/{PI_SESSION_ID}/{PI_CHILD_SESSION_ID}'"
+        )))
+        .stdout(predicate::str::contains(format!(
+            "uri: 'agents://pi/{PI_SESSION_ID}/{PI_MISSING_CHILD_SESSION_ID}'"
+        )))
+        .stdout(predicate::str::contains("status: 'completed'"))
+        .stdout(predicate::str::contains("status: 'notFound'"))
+        .stdout(predicate::str::contains("warnings:"));
+}
+
+#[test]
+fn pi_child_session_outputs_subagent_markdown_view() {
+    let temp = setup_pi_tree_with_child_sessions();
+    let main_uri = agents_uri("pi", PI_SESSION_ID);
+    let child_uri = agents_child_uri("pi", PI_SESSION_ID, PI_CHILD_SESSION_ID);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PI_CODING_AGENT_DIR", temp.path().join("agent"))
+        .arg(&child_uri)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Subagent Thread"))
+        .stdout(predicate::str::contains(format!(
+            "- Main Thread: `{main_uri}`"
+        )))
+        .stdout(predicate::str::contains(format!(
+            "- Subagent Thread: `{child_uri}`"
+        )))
+        .stdout(predicate::str::contains("child done"))
+        .stdout(predicate::str::contains("## Thread Excerpt (Child Thread)"));
+}
+
+#[test]
+fn pi_child_session_head_outputs_subagent_detail() {
+    let temp = setup_pi_tree_with_child_sessions();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PI_CODING_AGENT_DIR", temp.path().join("agent"))
+        .arg(pi_child_session_uri())
+        .arg("--head")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("mode: 'subagent_detail'"))
+        .stdout(predicate::str::contains(format!(
+            "agent_id: '{PI_CHILD_SESSION_ID}'"
+        )))
+        .stdout(predicate::str::contains("status: 'completed'"))
+        .stdout(predicate::str::contains("# Subagent Thread").not());
+}
+
+#[test]
+fn pi_missing_child_session_head_reports_not_found_with_evidence() {
+    let temp = setup_pi_tree_with_child_sessions();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PI_CODING_AGENT_DIR", temp.path().join("agent"))
+        .arg(pi_missing_child_session_uri())
+        .arg("--head")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("mode: 'subagent_detail'"))
+        .stdout(predicate::str::contains(format!(
+            "agent_id: '{PI_MISSING_CHILD_SESSION_ID}'"
+        )))
+        .stdout(predicate::str::contains("status: 'notFound'"))
+        .stdout(predicate::str::contains("warnings:"))
+        .stdout(predicate::str::contains(
+            "relation hint references child_session_id",
+        ));
 }
 
 #[test]

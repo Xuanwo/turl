@@ -53,6 +53,9 @@ Drill down into a discovered child target:
 ```bash
 xurl agents://amp/T-019c0797-c402-7389-bd80-d785c98df295/T-1abc0797-c402-7389-bd80-d785c98df295
 xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592/019c87fb-38b9-7843-92b1-832f02598495
+xurl agents://claude/2823d1df-720a-4c31-ac55-ae8ba726721f/acompact-69d537
+xurl agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f/72b3a4a8-4f08-40af-8d7f-8b2c77584e89
+xurl agents://pi/12cb4c19-2774-4de4-a0d0-9fa32fbae29f/d1b2c3d4
 ```
 
 Start a new agent conversation:
@@ -119,5 +122,6 @@ agents://codex/<conversation_id>
 agents://codex/<main_conversation_id>/<agent_id>
 agents://claude/<conversation_id>
 agents://claude/<main_conversation_id>/<agent_id>
+agents://pi/<conversation_id>/<child_session_id>
 agents://pi/<conversation_id>/<entry_id>
 ```
