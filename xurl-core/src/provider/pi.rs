@@ -96,7 +96,7 @@ impl PiProvider {
         std::env::var("XURL_PI_BIN").unwrap_or_else(|_| "pi".to_string())
     }
 
-    fn spawn_pi_command(args: &[String], workdir: Option<&Path>) -> Result<std::process::Child> {
+    fn spawn_pi_command(args: &[String]) -> Result<std::process::Child> {
         let bin = Self::pi_bin();
         let mut command = Command::new(&bin);
         command
@@ -104,9 +104,6 @@ impl PiProvider {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if let Some(workdir) = workdir {
-            command.current_dir(workdir);
-        }
         command.spawn().map_err(|source| {
             if source.kind() == std::io::ErrorKind::NotFound {
                 XurlError::CommandNotFound { command: bin }
@@ -153,7 +150,7 @@ impl PiProvider {
         sink: &mut dyn WriteEventSink,
         warnings: Vec<String>,
     ) -> Result<WriteResult> {
-        let mut child = Self::spawn_pi_command(args, req.options.workdir.as_deref())?;
+        let mut child = Self::spawn_pi_command(args)?;
         let stdout = child
             .stdout
             .take()
@@ -296,12 +293,7 @@ impl Provider for PiProvider {
     }
 
     fn write(&self, req: &WriteRequest, sink: &mut dyn WriteEventSink) -> Result<WriteResult> {
-        let mut warnings = Vec::new();
-        if !req.options.add_dirs.is_empty() {
-            warnings.push(
-                "ignored query parameter `add_dir`: pi CLI has no compatible option".to_string(),
-            );
-        }
+        let warnings = Vec::new();
         let mut args = Vec::new();
         if let Some(session_id) = req.session_id.as_deref() {
             let resolved = self.resolve(session_id)?;
@@ -318,14 +310,7 @@ impl Provider for PiProvider {
             args.push("--mode".to_string());
             args.push("json".to_string());
         }
-        append_passthrough_args(
-            &mut args,
-            &req.options.passthrough,
-            &[
-                "workdir", "add_dir", "mode", "session", "resume", "continue", "prompt", "p",
-            ],
-            &mut warnings,
-        );
+        append_passthrough_args(&mut args, &req.options.params);
         self.run_write(&args, req, sink, warnings)
     }
 }

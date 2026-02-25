@@ -1656,45 +1656,31 @@ exit 7
 
 #[cfg(unix)]
 #[test]
-fn write_create_supports_query_options_passthrough_and_reserved_ignores() {
-    let temp = tempdir().expect("tempdir");
-    let workdir_raw = temp.path().join("workdir");
-    let add_dir_a_raw = temp.path().join("add-a");
-    let add_dir_b_raw = temp.path().join("add-b");
-    fs::create_dir_all(&workdir_raw).expect("mkdir");
-    fs::create_dir_all(&add_dir_a_raw).expect("mkdir");
-    fs::create_dir_all(&add_dir_b_raw).expect("mkdir");
-    let workdir = fs::canonicalize(&workdir_raw).expect("canonicalize");
-    let add_dir_a = fs::canonicalize(&add_dir_a_raw).expect("canonicalize");
-    let add_dir_b = fs::canonicalize(&add_dir_b_raw).expect("canonicalize");
-
-    let workdir_text = workdir.display().to_string();
-    let add_dir_a_text = add_dir_a.display().to_string();
-    let add_dir_b_text = add_dir_b.display().to_string();
+fn write_create_passthroughs_all_query_options_without_normalization() {
+    let workdir_text = "/tmp/workdir".to_string();
+    let add_dir_a_text = "/tmp/add-a".to_string();
+    let add_dir_b_text = "/tmp/add-b".to_string();
     let script = format!(
         r#"
 if [ "$1" != "exec" ] || [ "$2" != "--json" ]; then
   echo "unexpected args: $*" >&2
   exit 7
 fi
-if [ "$(pwd)" != "{workdir_text}" ]; then
-  echo "unexpected cwd: $(pwd)" >&2
-  exit 8
-fi
-found_cd=0
+found_workdir=0
 found_model=0
 found_flag=0
 count_add_dir=0
 count_json=0
+count_json_with_value=0
 prompt_seen=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --cd)
+    --workdir)
       shift
       [ "$1" = "{workdir_text}" ] || exit 9
-      found_cd=1
+      found_workdir=1
       ;;
-    --add-dir)
+    --add_dir)
       shift
       if [ "$1" = "{add_dir_a_text}" ] || [ "$1" = "{add_dir_b_text}" ]; then
         count_add_dir=$((count_add_dir + 1))
@@ -1713,6 +1699,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --json)
       count_json=$((count_json + 1))
+      if [ "$2" = "1" ]; then
+        shift
+        count_json_with_value=$((count_json_with_value + 1))
+      fi
       ;;
     hello)
       prompt_seen=1
@@ -1720,7 +1710,7 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
-if [ "$found_cd" -ne 1 ] || [ "$count_add_dir" -ne 2 ] || [ "$found_model" -ne 1 ] || [ "$found_flag" -ne 1 ] || [ "$count_json" -ne 1 ] || [ "$prompt_seen" -ne 1 ]; then
+if [ "$found_workdir" -ne 1 ] || [ "$count_add_dir" -ne 2 ] || [ "$found_model" -ne 1 ] || [ "$found_flag" -ne 1 ] || [ "$count_json" -ne 2 ] || [ "$count_json_with_value" -ne 1 ] || [ "$prompt_seen" -ne 1 ]; then
   echo "missing expected flags" >&2
   exit 12
 fi
@@ -1744,9 +1734,7 @@ echo '{{"type":"item.completed","item":{{"id":"item_1","type":"agent_message","t
         .assert()
         .success()
         .stdout(predicate::str::contains("query options ok"))
-        .stderr(predicate::str::contains(
-            "ignored query parameter `json`: reserved by xurl for this provider",
-        ))
+        .stderr(predicate::str::contains("reserved by xurl").not())
         .stderr(predicate::str::contains(
             "created: agents://codex/66666666-6666-4666-8666-666666666666",
         ));
@@ -1754,16 +1742,43 @@ echo '{{"type":"item.completed","item":{{"id":"item_1","type":"agent_message","t
 
 #[cfg(unix)]
 #[test]
-fn write_append_ignores_query_options() {
+fn write_append_passthroughs_query_options() {
     let target_session = "22222222-2222-4222-8222-222222222222";
     let script = format!(
         r#"
-if [ "$1" != "exec" ] || [ "$2" != "resume" ] || [ "$3" != "--json" ] || [ "$4" != "{target_session}" ] || [ "$5" != "continue" ] || [ "$#" -ne 5 ]; then
+if [ "$1" != "exec" ] || [ "$2" != "resume" ] || [ "$3" != "--json" ]; then
   echo "unexpected args: $*" >&2
   exit 7
 fi
+count_workdir=0
+found_flag=0
+found_prompt=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --workdir)
+      shift
+      if [ "$1" = "/tmp/a" ] || [ "$1" = "/tmp/b" ]; then
+        count_workdir=$((count_workdir + 1))
+      else
+        exit 8
+      fi
+      ;;
+    --flag)
+      found_flag=1
+      ;;
+    "{target_session}")
+      ;;
+    continue)
+      found_prompt=1
+      ;;
+  esac
+  shift
+done
+[ "$count_workdir" -eq 2 ] || exit 9
+[ "$found_flag" -eq 1 ] || exit 10
+[ "$found_prompt" -eq 1 ] || exit 11
 echo '{{"type":"thread.started","thread_id":"{target_session}"}}'
-echo '{{"type":"item.completed","item":{{"id":"item_1","type":"agent_message","text":"append ignores query"}}}}'
+echo '{{"type":"item.completed","item":{{"id":"item_1","type":"agent_message","text":"append passthrough query"}}}}'
 "#,
     );
     let mock = setup_mock_bins(&[("codex", script.as_str())]);
@@ -1780,13 +1795,8 @@ echo '{{"type":"item.completed","item":{{"id":"item_1","type":"agent_message","t
         .arg("continue")
         .assert()
         .success()
-        .stdout(predicate::str::contains("append ignores query"))
-        .stderr(predicate::str::contains(
-            "ignored query parameter `workdir` in append mode",
-        ))
-        .stderr(predicate::str::contains(
-            "ignored query parameter `flag` in append mode",
-        ))
+        .stdout(predicate::str::contains("append passthrough query"))
+        .stderr(predicate::str::contains("ignored query parameter").not())
         .stderr(predicate::str::contains(format!(
             "updated: agents://codex/{target_session}",
         )));
@@ -1794,43 +1804,45 @@ echo '{{"type":"item.completed","item":{{"id":"item_1","type":"agent_message","t
 
 #[cfg(unix)]
 #[test]
-fn write_amp_workdir_fallback_and_add_dir_warning() {
-    let temp = tempdir().expect("tempdir");
-    let workdir_raw = temp.path().join("amp-workdir");
-    let add_dir_raw = temp.path().join("amp-add");
-    fs::create_dir_all(&workdir_raw).expect("mkdir");
-    fs::create_dir_all(&add_dir_raw).expect("mkdir");
-    let workdir = fs::canonicalize(&workdir_raw).expect("canonicalize");
-    let add_dir = fs::canonicalize(&add_dir_raw).expect("canonicalize");
-    let workdir_text = workdir.display().to_string();
+fn write_amp_passthroughs_workdir_and_add_dir_query_parameters() {
+    let workdir_text = "/tmp/amp-workdir".to_string();
+    let add_dir_text = "/tmp/amp-add".to_string();
     let script = format!(
         r#"
-if [ "$(pwd)" != "{workdir_text}" ]; then
-  echo "unexpected cwd: $(pwd)" >&2
-  exit 8
-fi
 if [ "$1" != "-x" ] || [ "$2" != "hello" ] || [ "$3" != "--stream-json" ]; then
   echo "unexpected args: $*" >&2
   exit 7
 fi
+seen_workdir=0
+seen_add_dir=0
 seen_foo=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --workdir)
+      shift
+      [ "$1" = "{workdir_text}" ] || exit 8
+      seen_workdir=1
+      ;;
+    --add_dir)
+      shift
+      [ "$1" = "{add_dir_text}" ] || exit 9
+      seen_add_dir=1
+      ;;
     --foo)
       shift
-      [ "$1" = "bar" ] || exit 9
+      [ "$1" = "bar" ] || exit 10
       seen_foo=1
       ;;
-    --add-dir)
-      echo "add_dir must be ignored for amp" >&2
-      exit 10
+    *)
       ;;
   esac
   shift
 done
-[ "$seen_foo" -eq 1 ] || exit 11
+[ "$seen_workdir" -eq 1 ] || exit 11
+[ "$seen_add_dir" -eq 1 ] || exit 12
+[ "$seen_foo" -eq 1 ] || exit 13
 echo '{{"type":"system","subtype":"init","session_id":"T-77777777-7777-4777-8777-777777777777"}}'
-echo '{{"type":"assistant","session_id":"T-77777777-7777-4777-8777-777777777777","message":{{"content":[{{"type":"text","text":"cwd:{workdir_text}"}}]}}}}'
+echo '{{"type":"assistant","session_id":"T-77777777-7777-4777-8777-777777777777","message":{{"content":[{{"type":"text","text":"passthrough-ok"}}]}}}}'
 echo '{{"type":"result","subtype":"success","session_id":"T-77777777-7777-4777-8777-777777777777","result":"ok"}}'
 "#,
     );
@@ -1838,7 +1850,7 @@ echo '{{"type":"result","subtype":"success","session_id":"T-77777777-7777-4777-8
     let target = format!(
         "agents://amp?workdir={}&add_dir={}&foo=bar",
         encode_query_component(&workdir_text),
-        encode_query_component(&add_dir.display().to_string()),
+        encode_query_component(&add_dir_text),
     );
 
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
@@ -1848,10 +1860,8 @@ echo '{{"type":"result","subtype":"success","session_id":"T-77777777-7777-4777-8
         .arg("hello")
         .assert()
         .success()
-        .stdout(predicate::str::contains(format!("cwd:{workdir_text}")))
-        .stderr(predicate::str::contains(
-            "ignored query parameter `add_dir`: Amp CLI has no compatible option",
-        ))
+        .stdout(predicate::str::contains("passthrough-ok"))
+        .stderr(predicate::str::contains("ignored query parameter `add_dir`").not())
         .stderr(predicate::str::contains(
             "created: agents://amp/T-77777777-7777-4777-8777-777777777777",
         ));

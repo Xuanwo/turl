@@ -149,10 +149,7 @@ impl OpencodeProvider {
         std::env::var("XURL_OPENCODE_BIN").unwrap_or_else(|_| "opencode".to_string())
     }
 
-    fn spawn_opencode_command(
-        args: &[String],
-        workdir: Option<&std::path::Path>,
-    ) -> Result<std::process::Child> {
+    fn spawn_opencode_command(args: &[String]) -> Result<std::process::Child> {
         let bin = Self::opencode_bin();
         let mut command = Command::new(&bin);
         command
@@ -160,9 +157,6 @@ impl OpencodeProvider {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if let Some(workdir) = workdir {
-            command.current_dir(workdir);
-        }
         command.spawn().map_err(|source| {
             if source.kind() == std::io::ErrorKind::NotFound {
                 XurlError::CommandNotFound { command: bin }
@@ -266,7 +260,7 @@ impl OpencodeProvider {
         sink: &mut dyn WriteEventSink,
         warnings: Vec<String>,
     ) -> Result<WriteResult> {
-        let mut child = Self::spawn_opencode_command(args, req.options.workdir.as_deref())?;
+        let mut child = Self::spawn_opencode_command(args)?;
         let stdout = child.stdout.take().ok_or_else(|| {
             XurlError::WriteProtocol("opencode stdout pipe is unavailable".to_string())
         })?;
@@ -458,18 +452,8 @@ impl Provider for OpencodeProvider {
     }
 
     fn write(&self, req: &WriteRequest, sink: &mut dyn WriteEventSink) -> Result<WriteResult> {
-        let mut warnings = Vec::new();
+        let warnings = Vec::new();
         let mut args = vec!["run".to_string(), req.prompt.clone()];
-        if let Some(workdir) = req.options.workdir.as_ref() {
-            args.push("--dir".to_string());
-            args.push(workdir.display().to_string());
-        }
-        if !req.options.add_dirs.is_empty() {
-            warnings.push(
-                "ignored query parameter `add_dir`: OpenCode CLI has no compatible option"
-                    .to_string(),
-            );
-        }
         if let Some(session_id) = req.session_id.as_deref() {
             args.push("--session".to_string());
             args.push(session_id.to_string());
@@ -478,14 +462,7 @@ impl Provider for OpencodeProvider {
         }
         args.push("--format".to_string());
         args.push("json".to_string());
-        append_passthrough_args(
-            &mut args,
-            &req.options.passthrough,
-            &[
-                "workdir", "add_dir", "format", "session", "continue", "resume", "dir",
-            ],
-            &mut warnings,
-        );
+        append_passthrough_args(&mut args, &req.options.params);
         self.run_write(&args, req, sink, warnings)
     }
 }

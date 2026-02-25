@@ -88,7 +88,7 @@ xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592 -d "Continue"
 Create with query parameters:
 
 ```bash
-xurl "agents://codex?workdir=%2FUsers%2Falice%2Frepo&add_dir=%2FUsers%2Falice%2Fshared&model=gpt-5" -d "Review this patch"
+xurl "agents://codex?cd=%2FUsers%2Falice%2Frepo&add-dir=%2FUsers%2Falice%2Fshared&model=gpt-5" -d "Review this patch"
 ```
 
 Save output:
@@ -130,14 +130,13 @@ xurl [OPTIONS] <URI>
 
 - `q=<keyword>`: filters discovery results by keyword. Use when you want to find conversations by topic.
 - `limit=<n>`: limits discovery result count (default `10`). Use when you need a shorter or longer result list.
-- `workdir=<dir>`: sets the initial working directory for create mode. Use when a new conversation should run in a specific project root.
-- `add_dir=<dir>`: adds additional directories for create mode (repeatable). Use when a new conversation needs access to multiple directories.
-- `<key>=<value>`: passes a custom provider option in create mode. Use when you need provider-specific behavior not covered by standard keys.
+- `<key>=<value>`: in write mode (`-d`), `xurl` forwards as `--<key> <value>` to the provider CLI.
+- `<flag>`: in write mode (`-d`), `xurl` forwards as `--<flag>` to the provider CLI.
 
 Examples:
 
 ```text
 agents://codex?q=spawn_agent&limit=10
 agents://codex/threads/<conversation_id>
-agents://codex?workdir=%2FUsers%2Falice%2Frepo
+agents://codex?cd=%2FUsers%2Falice%2Frepo&add-dir=%2FUsers%2Falice%2Fshared
 ```

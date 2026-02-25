@@ -132,7 +132,7 @@ xurl agents://codex/<conversation_id> -d "Continue"
 Create with query parameters:
 
 ```bash
-xurl "agents://codex?workdir=%2FUsers%2Falice%2Frepo&add_dir=%2FUsers%2Falice%2Fshared&model=gpt-5" -d "Review this patch"
+xurl "agents://codex?cd=%2FUsers%2Falice%2Frepo&add-dir=%2FUsers%2Falice%2Fshared&model=gpt-5" -d "Review this patch"
 ```
 
 Payload from file/stdin:
@@ -185,9 +185,8 @@ Query parameters:
 
 - `q=<keyword>`: filter discovery results by keyword. Use when searching conversations by topic.
 - `limit=<n>`: cap discovery results (default `10`). Use when you want fewer or more results.
-- `workdir=<dir>`: set initial working directory for create mode. Use when new work must start in a specific repo.
-- `add_dir=<dir>`: add extra directories for create mode (repeatable). Use when new work needs multiple directories.
-- `<key>=<value>`: pass custom provider option in create mode. Use when standard keys are not enough.
+- `<key>=<value>`: in write mode (`-d`), forwarded as `--<key> <value>` to the provider CLI.
+- `<flag>`: in write mode (`-d`), forwarded as `--<flag>` to the provider CLI.
 
 ## Failure Handling
 
