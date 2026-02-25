@@ -44,6 +44,8 @@ Read an agent conversation:
 
 ```bash
 xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
+# equivalent shorthand:
+xurl codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 ```
 
 Query provider threads:
@@ -52,6 +54,9 @@ Query provider threads:
 xurl agents://codex
 xurl 'agents://codex?q=spawn_agent'
 xurl 'agents://claude?q=agent&limit=5'
+# equivalent shorthand:
+xurl codex
+xurl 'codex?q=spawn_agent'
 ```
 
 Discover child targets:
@@ -70,6 +75,8 @@ Start a new agent conversation:
 
 ```bash
 xurl agents://codex -d "Draft a migration plan"
+# equivalent shorthand:
+xurl codex -d "Draft a migration plan"
 ```
 
 Continue an existing conversation:
@@ -106,12 +113,13 @@ xurl [OPTIONS] <URI>
 ## URI Reference
 
 ```text
-agents://<provider>[/<conversation_id>[/<child_id>]][?<query>]
+[agents://]<provider>[/<conversation_id>[/<child_id>]][?<query>]
 |------|  |--------|  |---------------------------|  |------|
- scheme    provider         optional path parts        query
+ optional   provider         optional path parts        query
+ scheme
 ```
 
-- `scheme`: fixed as `agents`.
+- `scheme`: optional `agents://` prefix. If omitted, `xurl` treats input as an `agents` URI shorthand.
 - `provider`: target provider name, such as `codex`, `claude`, `gemini`, `amp`, `pi`, `opencode`.
 - `conversation_id`: main conversation identifier.
 - `child_id`: child/subagent identifier under a main conversation.

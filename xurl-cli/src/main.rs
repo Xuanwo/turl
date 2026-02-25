@@ -17,7 +17,7 @@ use xurl_core::{
 #[derive(Debug, Parser)]
 #[command(name = "xurl", version, about = "Resolve and read code-agent threads")]
 struct Cli {
-    /// Thread URI like agents://codex/<session_id>, agents://claude/<session_id>, agents://pi/<session_id>/<child_or_entry_id>, or legacy forms like codex://<session_id>
+    /// Thread URI like agents://codex/<session_id>, codex/<session_id>, agents://claude/<session_id>, agents://pi/<session_id>/<child_or_entry_id>, or legacy forms like codex://<session_id>
     uri: String,
 
     /// Output frontmatter only (header mode)
