@@ -128,12 +128,6 @@ Create with query parameters:
 xurl "agents://codex?workdir=%2FUsers%2Falice%2Frepo&add_dir=%2FUsers%2Falice%2Fshared&model=gpt-5" -d "Review this patch"
 ```
 
-Append with query parameters:
-
-```bash
-xurl "agents://codex/<conversation_id>?workdir=%2FUsers%2Falice%2Frepo&flag" -d "Continue"
-```
-
 Payload from file/stdin:
 
 ```bash
@@ -161,14 +155,15 @@ Write mode rules:
 - child URI write is rejected
 - `--head` and `--data` cannot be combined
 - multiple `-d` values are newline-joined
-- all write parameters come from URI query keys
+- create parameters come from URI query keys
+- append URI query parameters are ignored with warnings
 
 Write output:
 
 - assistant text: `stdout` (or `--output` file)
 - canonical URI: `stderr` as `created: ...` / `updated: ...`
 
-Write query keys:
+Write query keys (create mode):
 
 - standard: `workdir`, `add_dir` (repeatable)
 - unknown keys are passthrough (`k=v` -> `--k v`, `k` -> `--k`)
@@ -176,6 +171,7 @@ Write query keys:
 - reserved conflicting keys are ignored with `warning:` on stderr
 - `workdir` must be non-empty and directory-valid
 - empty `add_dir` is ignored with warning
+- append mode ignores all URI query keys
 
 Provider mapping:
 
@@ -191,7 +187,7 @@ Canonical:
 - `agents://<provider>/<conversation_id>`
 - `agents://<provider>/<conversation_id>/<child_id>`
 - `agents://<provider>?k=v` (write create)
-- `agents://<provider>/<conversation_id>?k=v` (write append)
+- `agents://<provider>/<conversation_id>` (write append)
 
 Child drill-down URI forms:
 

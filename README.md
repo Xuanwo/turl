@@ -73,12 +73,6 @@ Create with query parameters:
 xurl "agents://codex?workdir=%2FUsers%2Falice%2Frepo&add_dir=%2FUsers%2Falice%2Fshared&model=gpt-5" -d "Review this patch"
 ```
 
-Append with query parameters:
-
-```bash
-xurl "agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592?workdir=%2FUsers%2Falice%2Frepo&flag" -d "Continue"
-```
-
 Save output:
 
 ```bash
@@ -114,10 +108,11 @@ Write mode URI rules:
 - `agents://<provider>/<conversation_id>` with `-d` appends to a conversation.
 - `agents://<provider>/<conversation_id>/<child_id>` is rejected in write mode.
 - `-I/--head` cannot be combined with `-d/--data`.
+- append mode ignores URI query parameters (thread options are fixed at creation time).
 
 ## Write Query Parameters
 
-All write parameters are flat URI query keys.
+Create mode parameters use flat URI query keys.
 
 Standard keys:
 
@@ -135,6 +130,10 @@ Unknown keys:
 - `k=v` is passed through as `--k v`.
 - `k` or `k=` is passed through as `--k`.
 - repeated keys preserve URI order.
+
+Append mode:
+
+- URI query parameters are ignored with warnings.
 
 Ignore and warning rules:
 
@@ -164,7 +163,7 @@ Canonical query/read forms:
 Canonical write forms:
 
 - `agents://<provider>?k=v` (create)
-- `agents://<provider>/<conversation_id>?k=v` (append)
+- `agents://<provider>/<conversation_id>` (append)
 
 Examples:
 

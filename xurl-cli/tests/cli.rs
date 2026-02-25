@@ -1687,67 +1687,23 @@ echo '{{"type":"item.completed","item":{{"id":"item_1","type":"agent_message","t
 
 #[cfg(unix)]
 #[test]
-fn write_append_supports_query_workdir_last_wins() {
-    let temp = tempdir().expect("tempdir");
-    let first_workdir_raw = temp.path().join("workdir-a");
-    let last_workdir_raw = temp.path().join("workdir-b");
-    fs::create_dir_all(&first_workdir_raw).expect("mkdir");
-    fs::create_dir_all(&last_workdir_raw).expect("mkdir");
-    let first_workdir = fs::canonicalize(&first_workdir_raw).expect("canonicalize");
-    let last_workdir = fs::canonicalize(&last_workdir_raw).expect("canonicalize");
-    let first_workdir_text = first_workdir.display().to_string();
-    let last_workdir_text = last_workdir.display().to_string();
+fn write_append_ignores_query_options() {
     let target_session = "22222222-2222-4222-8222-222222222222";
     let script = format!(
         r#"
-if [ "$1" != "exec" ] || [ "$2" != "resume" ] || [ "$3" != "--json" ]; then
+if [ "$1" != "exec" ] || [ "$2" != "resume" ] || [ "$3" != "--json" ] || [ "$4" != "{target_session}" ] || [ "$5" != "continue" ] || [ "$#" -ne 5 ]; then
   echo "unexpected args: $*" >&2
   exit 7
 fi
-if [ "$(pwd)" != "{last_workdir_text}" ]; then
-  echo "unexpected cwd: $(pwd)" >&2
-  exit 8
-fi
-seen_cd=0
-seen_flag=0
-seen_session=0
-seen_prompt=0
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --cd)
-      shift
-      [ "$1" = "{last_workdir_text}" ] || exit 9
-      seen_cd=1
-      ;;
-    --flag)
-      seen_flag=1
-      ;;
-    "{target_session}")
-      seen_session=1
-      ;;
-    continue)
-      seen_prompt=1
-      ;;
-    "{first_workdir_text}")
-      echo "unexpected first workdir value" >&2
-      exit 10
-      ;;
-  esac
-  shift
-done
-if [ "$seen_cd" -ne 1 ] || [ "$seen_flag" -ne 1 ] || [ "$seen_session" -ne 1 ] || [ "$seen_prompt" -ne 1 ]; then
-  echo "missing expected args" >&2
-  exit 11
-fi
 echo '{{"type":"thread.started","thread_id":"{target_session}"}}'
-echo '{{"type":"item.completed","item":{{"id":"item_1","type":"agent_message","text":"last wins"}}}}'
+echo '{{"type":"item.completed","item":{{"id":"item_1","type":"agent_message","text":"append ignores query"}}}}'
 "#,
     );
     let mock = setup_mock_bins(&[("codex", script.as_str())]);
     let target = format!(
         "agents://codex/{target_session}?workdir={}&workdir={}&flag",
-        encode_query_component(&first_workdir_text),
-        encode_query_component(&last_workdir_text),
+        encode_query_component("/tmp/a"),
+        encode_query_component("/tmp/b"),
     );
 
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
@@ -1757,7 +1713,13 @@ echo '{{"type":"item.completed","item":{{"id":"item_1","type":"agent_message","t
         .arg("continue")
         .assert()
         .success()
-        .stdout(predicate::str::contains("last wins"))
+        .stdout(predicate::str::contains("append ignores query"))
+        .stderr(predicate::str::contains(
+            "ignored query parameter `workdir` in append mode",
+        ))
+        .stderr(predicate::str::contains(
+            "ignored query parameter `flag` in append mode",
+        ))
         .stderr(predicate::str::contains(format!(
             "updated: agents://codex/{target_session}",
         )));

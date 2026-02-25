@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::{fs, io};
@@ -160,13 +161,19 @@ fn parse_write_target(input: &str) -> xurl_core::Result<WriteTarget> {
                 .to_string(),
         ));
     }
-    let (options, warnings) = build_write_options(&uri)?;
-
     let action = if uri.is_collection() {
         WriteAction::Create
     } else {
         WriteAction::Append
     };
+    let (options, warnings) = match action {
+        WriteAction::Create => build_write_options(&uri)?,
+        WriteAction::Append => (
+            WriteOptions::default(),
+            build_append_query_ignored_warnings(&uri),
+        ),
+    };
+
     let session_id = if uri.session_id.is_empty() {
         None
     } else {
@@ -212,6 +219,21 @@ fn build_write_options(uri: &AgentsUri) -> xurl_core::Result<(WriteOptions, Vec<
     }
 
     Ok((options, warnings))
+}
+
+fn build_append_query_ignored_warnings(uri: &AgentsUri) -> Vec<String> {
+    let mut keys = BTreeSet::<String>::new();
+    for (key, _) in &uri.query {
+        keys.insert(key.clone());
+    }
+
+    keys.into_iter()
+        .map(|key| {
+            format!(
+                "ignored query parameter `{key}` in append mode: thread options are fixed at creation time"
+            )
+        })
+        .collect()
 }
 
 fn normalize_directory(raw: &str) -> xurl_core::Result<PathBuf> {
