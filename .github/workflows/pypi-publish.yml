@@ -101,12 +101,6 @@ jobs:
             --vendor-src dist/vendor \
             --output-dir dist/pypi
 
-      - name: Stage source distribution
-        uses: PyO3/maturin-action@v1
-        with:
-          command: sdist
-          args: --out dist/pypi
-
       - name: Upload PyPI distributions
         uses: actions/upload-artifact@v4
         with:
