@@ -102,54 +102,34 @@ xurl [OPTIONS] <URI>
   - file: `-d @prompt.txt`
   - stdin: `-d @-`
 - `-o, --output <PATH>`: write command output to file.
-- `-I/--head` cannot be combined with `-d/--data`.
 
 ## URI Reference
 
-Read/discovery URIs:
+```text
+agents://<provider>[/<conversation_id>[/<child_id>]][?<query>]
+|------|  |--------|  |---------------------------|  |------|
+ scheme    provider         optional path parts        query
+```
 
-- `agents://<provider>[?q=<keyword>&limit=<n>]` (thread discovery/query mode)
-- `agents://<provider>/<conversation_id>`
-- `agents://<provider>/<conversation_id>/<child_id>`
+- `scheme`: fixed as `agents`.
+- `provider`: target provider name, such as `codex`, `claude`, `gemini`, `amp`, `pi`, `opencode`.
+- `conversation_id`: main conversation identifier.
+- `child_id`: child/subagent identifier under a main conversation.
+- `query`: optional key-value parameters, interpreted by context.
 
-Write URIs:
 
-- `agents://<provider>?k=v` (create)
-- `agents://<provider>/<conversation_id>` (append)
+### Query
 
-Read query keys:
-
-- `q=<keyword>`: keyword search in provider thread data.
-- `limit=<n>`: result count, default is `10`.
-
-Create query keys:
-
-- standard:
-  - `workdir=<dir>`: working directory for the agent command (last-wins).
-  - `add_dir=<dir>`: additional directory (repeatable).
-- passthrough:
-  - `k=v`: pass custom option with value.
-  - `k` or `k=`: pass custom flag without value.
-  - repeated keys preserve URI order.
-
-Append query keys:
-
-- all query keys are ignored with warnings (thread options are fixed at creation time).
-
-Validation and ignore rules:
-
-- reserved conflicting keys are ignored with `warning:` on stderr.
-- empty `workdir` is rejected as an error.
-- empty `add_dir` is ignored with warning.
+- `q=<keyword>`: filters discovery results by keyword. Use when you want to find conversations by topic.
+- `limit=<n>`: limits discovery result count (default `10`). Use when you need a shorter or longer result list.
+- `workdir=<dir>`: sets the initial working directory for create mode. Use when a new conversation should run in a specific project root.
+- `add_dir=<dir>`: adds additional directories for create mode (repeatable). Use when a new conversation needs access to multiple directories.
+- `<key>=<value>`: passes a custom provider option in create mode. Use when you need provider-specific behavior not covered by standard keys.
 
 Examples:
 
 ```text
 agents://codex?q=spawn_agent&limit=10
 agents://codex/threads/<conversation_id>
+agents://codex?workdir=%2FUsers%2Falice%2Frepo
 ```
-
-Legacy read compatibility:
-
-- `<provider>://<conversation_id>`
-- `<provider>://<conversation_id>/<child_id>`

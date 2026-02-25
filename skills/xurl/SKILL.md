@@ -149,44 +149,37 @@ cat prompt.md | xurl agents://claude -d @-
 
 ## URI Reference
 
-Read/discovery URIs:
+URI Anatomy (ASCII):
 
-- `agents://<provider>?q=<keyword>&limit=<n>`
-- `agents://<provider>/<conversation_id>`
-- `agents://<provider>/<conversation_id>/<child_id>`
+```text
+agents://<provider>[/<conversation_id>[/<child_id>]][?<query>]
+|------|  |--------|  |---------------------------|  |------|
+ scheme    provider         optional path parts        query
+```
 
-Write URIs:
+Component meanings:
 
-- `agents://<provider>?k=v` (create)
-- `agents://<provider>/<conversation_id>` (append)
+- `scheme`: fixed as `agents`
+- `provider`: provider name
+- `conversation_id`: main conversation id
+- `child_id`: child/subagent id
+- `query`: optional key-value parameters
 
-Read query keys:
+Common URI patterns:
 
-- `q`: keyword search only
-- `limit`: max result count, default `10`
+- `agents://<provider>`: discover recent conversations
+- `agents://<provider>/<conversation_id>`: read main conversation
+- `agents://<provider>/<conversation_id>/<child_id>`: read child/subagent conversation
+- `agents://<provider>?k=v` with `-d`: create
+- `agents://<provider>/<conversation_id>` with `-d`: append
 
-Create query keys:
+Query parameters:
 
-- standard: `workdir`, `add_dir` (repeatable)
-- unknown keys are passthrough (`k=v` with value, `k` without value)
-- repeated keys preserve URI order
-- reserved conflicting keys are ignored with `warning:` on stderr
-- `workdir` must be non-empty and directory-valid
-- empty `add_dir` is ignored with warning
-- append mode ignores all URI query keys with warnings
-
-Child drill-down URI forms:
-
-- `agents://<provider>/<main_conversation_id>/<child_id>`
-
-Legacy compatibility:
-
-- `<provider>://<conversation_id>`
-- `<provider>://<conversation_id>/<child_id>`
-
-Pi child forms:
-
-- `agents://pi/<session_id>/<child_id>`: `<child_id>` can be a UUID child session id or an entry id
+- `q=<keyword>`: filter discovery results by keyword. Use when searching conversations by topic.
+- `limit=<n>`: cap discovery results (default `10`). Use when you want fewer or more results.
+- `workdir=<dir>`: set initial working directory for create mode. Use when new work must start in a specific repo.
+- `add_dir=<dir>`: add extra directories for create mode (repeatable). Use when new work needs multiple directories.
+- `<key>=<value>`: pass custom provider option in create mode. Use when standard keys are not enough.
 
 ## Failure Handling
 
