@@ -1,11 +1,12 @@
 ---
 name: xurl
-description: Use xurl to read, discover, and write AI agent conversations through agents:// URIs.
+description: Use xurl to read, discover, and write AI agent conversations through agents:// URIs or shorthand provider paths.
 ---
 
 ## When to Use
 
 - User gives `agents://...` URI.
+- User gives shorthand URI like `codex/...` or `codex?...`.
 - User asks to list/search provider threads.
 - User asks to read or summarize a conversation.
 - User asks to discover child targets before drill-down.
@@ -78,6 +79,8 @@ List latest provider threads:
 
 ```bash
 xurl agents://codex
+# equivalent shorthand:
+xurl codex
 ```
 
 Keyword query with optional limit (default `10`):
@@ -91,6 +94,8 @@ xurl 'agents://claude?q=agent&limit=5'
 
 ```bash
 xurl agents://codex/<conversation_id>
+# equivalent shorthand:
+xurl codex/<conversation_id>
 ```
 
 ### 3) Discover
@@ -114,6 +119,8 @@ Create:
 
 ```bash
 xurl agents://codex -d "Start a new conversation"
+# equivalent shorthand:
+xurl codex -d "Start a new conversation"
 ```
 
 Append:
@@ -152,14 +159,15 @@ cat prompt.md | xurl agents://claude -d @-
 URI Anatomy (ASCII):
 
 ```text
-agents://<provider>[/<conversation_id>[/<child_id>]][?<query>]
+[agents://]<provider>[/<conversation_id>[/<child_id>]][?<query>]
 |------|  |--------|  |---------------------------|  |------|
- scheme    provider         optional path parts        query
+ optional   provider         optional path parts        query
+ scheme
 ```
 
 Component meanings:
 
-- `scheme`: fixed as `agents`
+- `scheme`: optional `agents://` prefix; omitted form is treated as shorthand
 - `provider`: provider name
 - `conversation_id`: main conversation id
 - `child_id`: child/subagent id

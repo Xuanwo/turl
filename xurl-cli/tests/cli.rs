@@ -480,6 +480,10 @@ fn agents_codex_uri() -> String {
     format!("agents://codex/{SESSION_ID}")
 }
 
+fn shorthand_codex_uri() -> String {
+    format!("codex/{SESSION_ID}")
+}
+
 fn codex_deeplink_uri() -> String {
     format!("codex://threads/{SESSION_ID}")
 }
@@ -677,6 +681,23 @@ fn agents_uri_outputs_markdown() {
 }
 
 #[test]
+fn shorthand_uri_outputs_markdown() {
+    let temp = setup_codex_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .env("CLAUDE_CONFIG_DIR", temp.path().join("missing-claude"))
+        .arg(shorthand_codex_uri())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "uri: 'agents://codex/{SESSION_ID}'"
+        )))
+        .stdout(predicate::str::contains("## 1. User"))
+        .stdout(predicate::str::contains("hello"));
+}
+
+#[test]
 fn raw_flag_is_rejected() {
     let temp = setup_codex_tree();
 
@@ -714,6 +735,23 @@ fn codex_collection_query_outputs_markdown() {
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
     cmd.env("CODEX_HOME", temp.path())
         .arg("agents://codex?q=hello&limit=1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Threads"))
+        .stdout(predicate::str::contains("- Limit: `1`"))
+        .stdout(predicate::str::contains(format!(
+            "agents://codex/{SESSION_ID}"
+        )))
+        .stdout(predicate::str::contains("- Match:"));
+}
+
+#[test]
+fn shorthand_collection_query_outputs_markdown() {
+    let temp = setup_codex_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .arg("codex?q=hello&limit=1")
         .assert()
         .success()
         .stdout(predicate::str::contains("# Threads"))
@@ -1547,6 +1585,35 @@ exit 7
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
     cmd.env("PATH", path_with_mock(mock.path()))
         .arg("agents://codex")
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("hello from create"))
+        .stderr(predicate::str::contains(
+            "created: agents://codex/11111111-1111-4111-8111-111111111111",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_create_supports_shorthand_collection_uri() {
+    let mock = setup_mock_bins(&[(
+        "codex",
+        r#"
+if [ "$1" = "exec" ] && [ "$2" = "--json" ]; then
+  echo '{"type":"thread.started","thread_id":"11111111-1111-4111-8111-111111111111"}'
+  echo '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"hello from create"}}'
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 7
+"#,
+    )]);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg("codex")
         .arg("-d")
         .arg("hello")
         .assert()
