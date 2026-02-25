@@ -1,14 +1,16 @@
 ---
 name: xurl
-description: Use xurl to read, discover, and write AI agent conversations through agents:// URIs or shorthand provider paths.
+description: Use xurl to read, discover, and write AI agent conversations through agents:// URIs, and read skills through skills:// URIs.
 ---
 
 ## When to Use
 
 - User gives `agents://...` URI.
 - User gives shorthand URI like `codex/...` or `codex?...`.
+- User gives `skills://...` URI.
 - User asks to list/search provider threads.
 - User asks to read or summarize a conversation.
+- User asks to read local or GitHub-hosted skill content.
 - User asks to discover child targets before drill-down.
 - User asks to start or continue conversations for providers.
 
@@ -142,6 +144,26 @@ xurl agents://codex -d @prompt.txt
 cat prompt.md | xurl agents://claude -d @-
 ```
 
+### 5) Read Skills
+
+Read local skill:
+
+```bash
+xurl skills://xurl
+```
+
+Read GitHub skill:
+
+```bash
+xurl skills://github.com/Xuanwo/xurl/skills/xurl
+```
+
+Frontmatter only:
+
+```bash
+xurl -I skills://xurl
+```
+
 ## Command Reference
 
 - Base form: `xurl [OPTIONS] <URI>`
@@ -153,6 +175,7 @@ cat prompt.md | xurl agents://claude -d @-
 - `-o, --output`: write command output to file
 - `--head` and `--data` cannot be combined
 - multiple `-d` values are newline-joined
+- `--data` is not supported for `skills://` URIs
 
 ## URI Reference
 
@@ -180,6 +203,12 @@ Common URI patterns:
 - `agents://<provider>/<conversation_id>/<child_id>`: read child/subagent conversation
 - `agents://<provider>?k=v` with `-d`: create
 - `agents://<provider>/<conversation_id>` with `-d`: append
+
+Skills URI patterns:
+
+- `skills://<skill-name>`: read local skill from `~/.agents/skills/<skill-name>/SKILL.md`
+- `skills://github.com/<owner>/<repo>/<skill-dir>`: read remote skill from cloned cache
+- `skills://github.com/<owner>/<repo>`: auto-match skill; on ambiguity, `xurl` returns candidate URIs
 
 Query parameters:
 
