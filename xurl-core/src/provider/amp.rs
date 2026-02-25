@@ -27,7 +27,7 @@ impl AmpProvider {
         std::env::var("XURL_AMP_BIN").unwrap_or_else(|_| "amp".to_string())
     }
 
-    fn spawn_amp_command(args: &[String], workdir: Option<&Path>) -> Result<std::process::Child> {
+    fn spawn_amp_command(args: &[String]) -> Result<std::process::Child> {
         let bin = Self::amp_bin();
         let mut command = Command::new(&bin);
         command
@@ -35,9 +35,6 @@ impl AmpProvider {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if let Some(workdir) = workdir {
-            command.current_dir(workdir);
-        }
         command.spawn().map_err(|source| {
             if source.kind() == std::io::ErrorKind::NotFound {
                 XurlError::CommandNotFound { command: bin }
@@ -74,7 +71,7 @@ impl AmpProvider {
         sink: &mut dyn WriteEventSink,
         warnings: Vec<String>,
     ) -> Result<WriteResult> {
-        let mut child = Self::spawn_amp_command(args, req.options.workdir.as_deref())?;
+        let mut child = Self::spawn_amp_command(args)?;
         let stdout = child.stdout.take().ok_or_else(|| {
             XurlError::WriteProtocol("amp stdout pipe is unavailable".to_string())
         })?;
@@ -219,7 +216,7 @@ impl Provider for AmpProvider {
     }
 
     fn write(&self, req: &WriteRequest, sink: &mut dyn WriteEventSink) -> Result<WriteResult> {
-        let mut warnings = Vec::new();
+        let warnings = Vec::new();
         let mut args = Vec::new();
         if let Some(session_id) = req.session_id.as_deref() {
             args.push("threads".to_string());
@@ -233,27 +230,7 @@ impl Provider for AmpProvider {
             args.push(req.prompt.clone());
             args.push("--stream-json".to_string());
         }
-        if !req.options.add_dirs.is_empty() {
-            warnings.push(
-                "ignored query parameter `add_dir`: Amp CLI has no compatible option".to_string(),
-            );
-        }
-        append_passthrough_args(
-            &mut args,
-            &req.options.passthrough,
-            &[
-                "workdir",
-                "add_dir",
-                "stream-json",
-                "stream-json-input",
-                "stream-json-thinking",
-                "execute",
-                "x",
-                "session",
-                "resume",
-            ],
-            &mut warnings,
-        );
+        append_passthrough_args(&mut args, &req.options.params);
         self.run_write(&args, req, sink, warnings)
     }
 }

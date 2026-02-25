@@ -179,10 +179,7 @@ impl ClaudeProvider {
         std::env::var("XURL_CLAUDE_BIN").unwrap_or_else(|_| "claude".to_string())
     }
 
-    fn spawn_claude_command(
-        args: &[String],
-        workdir: Option<&Path>,
-    ) -> Result<std::process::Child> {
+    fn spawn_claude_command(args: &[String]) -> Result<std::process::Child> {
         let bin = Self::claude_bin();
         let mut command = Command::new(&bin);
         command
@@ -190,9 +187,6 @@ impl ClaudeProvider {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if let Some(workdir) = workdir {
-            command.current_dir(workdir);
-        }
         command.spawn().map_err(|source| {
             if source.kind() == std::io::ErrorKind::NotFound {
                 XurlError::CommandNotFound { command: bin }
@@ -229,7 +223,7 @@ impl ClaudeProvider {
         sink: &mut dyn WriteEventSink,
         warnings: Vec<String>,
     ) -> Result<WriteResult> {
-        let mut child = Self::spawn_claude_command(args, req.options.workdir.as_deref())?;
+        let mut child = Self::spawn_claude_command(args)?;
         let stdout = child.stdout.take().ok_or_else(|| {
             XurlError::WriteProtocol("claude stdout pipe is unavailable".to_string())
         })?;
@@ -369,33 +363,14 @@ impl Provider for ClaudeProvider {
     }
 
     fn write(&self, req: &WriteRequest, sink: &mut dyn WriteEventSink) -> Result<WriteResult> {
-        let mut warnings = Vec::new();
+        let warnings = Vec::new();
         let mut args = vec![
             "-p".to_string(),
             "--verbose".to_string(),
             "--output-format".to_string(),
             "stream-json".to_string(),
         ];
-        for dir in &req.options.add_dirs {
-            args.push("--add-dir".to_string());
-            args.push(dir.display().to_string());
-        }
-        append_passthrough_args(
-            &mut args,
-            &req.options.passthrough,
-            &[
-                "workdir",
-                "add_dir",
-                "output-format",
-                "print",
-                "p",
-                "resume",
-                "continue",
-                "session-id",
-                "add-dir",
-            ],
-            &mut warnings,
-        );
+        append_passthrough_args(&mut args, &req.options.params);
         if let Some(session_id) = req.session_id.as_deref() {
             args.push("--resume".to_string());
             args.push(session_id.to_string());

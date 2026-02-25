@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::{fs, io};
@@ -166,13 +165,7 @@ fn parse_write_target(input: &str) -> xurl_core::Result<WriteTarget> {
     } else {
         WriteAction::Append
     };
-    let (options, warnings) = match action {
-        WriteAction::Create => build_write_options(&uri)?,
-        WriteAction::Append => (
-            WriteOptions::default(),
-            build_append_query_ignored_warnings(&uri),
-        ),
-    };
+    let (options, warnings) = build_write_options(&uri);
 
     let session_id = if uri.session_id.is_empty() {
         None
@@ -189,77 +182,13 @@ fn parse_write_target(input: &str) -> xurl_core::Result<WriteTarget> {
     })
 }
 
-fn build_write_options(uri: &AgentsUri) -> xurl_core::Result<(WriteOptions, Vec<String>)> {
-    let mut options = WriteOptions::default();
-    let mut warnings = Vec::new();
-    let mut workdir_raw = None::<String>;
-
-    for (key, value) in &uri.query {
-        match key.as_str() {
-            "workdir" => match value.as_deref() {
-                Some(raw) if !raw.is_empty() => {
-                    workdir_raw = Some(raw.to_string());
-                }
-                _ => {
-                    return Err(XurlError::InvalidMode(
-                        "query parameter `workdir` requires a non-empty value".to_string(),
-                    ));
-                }
-            },
-            "add_dir" => match value.as_deref() {
-                Some(raw) if !raw.is_empty() => options.add_dirs.push(normalize_directory(raw)?),
-                _ => warnings.push("ignored query parameter `add_dir`: empty value".to_string()),
-            },
-            _ => options.passthrough.push((key.clone(), value.clone())),
-        }
-    }
-
-    if let Some(raw) = workdir_raw {
-        options.workdir = Some(normalize_directory(&raw)?);
-    }
-
-    Ok((options, warnings))
-}
-
-fn build_append_query_ignored_warnings(uri: &AgentsUri) -> Vec<String> {
-    let mut keys = BTreeSet::<String>::new();
-    for (key, _) in &uri.query {
-        keys.insert(key.clone());
-    }
-
-    keys.into_iter()
-        .map(|key| {
-            format!(
-                "ignored query parameter `{key}` in append mode: thread options are fixed at creation time"
-            )
-        })
-        .collect()
-}
-
-fn normalize_directory(raw: &str) -> xurl_core::Result<PathBuf> {
-    let path = PathBuf::from(raw);
-    let absolute = if path.is_absolute() {
-        path
-    } else {
-        std::env::current_dir()
-            .map_err(|source| XurlError::Io {
-                path: PathBuf::from("<cwd>"),
-                source,
-            })?
-            .join(path)
-    };
-
-    let canonical = absolute.canonicalize().map_err(|source| XurlError::Io {
-        path: absolute.clone(),
-        source,
-    })?;
-    if !canonical.is_dir() {
-        return Err(XurlError::InvalidMode(format!(
-            "directory expected, got: {}",
-            canonical.display()
-        )));
-    }
-    Ok(canonical)
+fn build_write_options(uri: &AgentsUri) -> (WriteOptions, Vec<String>) {
+    (
+        WriteOptions {
+            params: uri.query.clone(),
+        },
+        Vec::new(),
+    )
 }
 
 fn build_prompt(data: &[String]) -> xurl_core::Result<String> {

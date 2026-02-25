@@ -58,9 +58,7 @@ pub struct WriteResult {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WriteOptions {
-    pub workdir: Option<PathBuf>,
-    pub add_dirs: Vec<PathBuf>,
-    pub passthrough: Vec<(String, Option<String>)>,
+    pub params: Vec<(String, Option<String>)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
