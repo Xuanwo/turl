@@ -6,6 +6,7 @@ description: Use xurl to read, discover, and write AI agent conversations throug
 ## When to Use
 
 - User gives `agents://...` URI.
+- User asks to list/search provider threads.
 - User asks to read or summarize a conversation.
 - User asks to discover child targets before drill-down.
 - User asks to start or continue conversations for providers.
@@ -71,13 +72,28 @@ xurl --version
 
 ## Core Workflows
 
-### 1) Read
+### 1) Query
+
+List latest provider threads:
+
+```bash
+xurl agents://codex
+```
+
+Keyword query with optional limit (default `10`):
+
+```bash
+xurl 'agents://codex?q=spawn_agent'
+xurl 'agents://claude?q=agent&limit=5'
+```
+
+### 2) Read
 
 ```bash
 xurl agents://codex/<conversation_id>
 ```
 
-### 2) Discover
+### 3) Discover
 
 ```bash
 xurl -I agents://codex/<conversation_id>
@@ -86,13 +102,13 @@ xurl -I agents://codex/<conversation_id>
 Use returned `subagents` or `entries` URI for next step.
 OpenCode child linkage is validated by sqlite `session.parent_id`.
 
-### 2.1) Drill Down Child Thread
+### 3.1) Drill Down Child Thread
 
 ```bash
 xurl agents://codex/<main_conversation_id>/<agent_id>
 ```
 
-### 3) Write
+### 4) Write
 
 Create:
 
@@ -132,6 +148,12 @@ cat prompt.md | xurl agents://claude -d @-
 - `-d, --data`: write payload, repeatable
 - `-o, --output`: write command output to file
 
+Collection query rules:
+
+- `agents://<provider>` in read mode returns latest threads.
+- `q` and `limit` query params are supported in read mode.
+- `q` is keyword search only; semantic interpretation stays in caller agent.
+
 Write mode rules:
 
 - `agents://<provider> -d ...` => create
@@ -165,6 +187,7 @@ Provider mapping:
 
 Canonical:
 
+- `agents://<provider>?q=<keyword>&limit=<n>`
 - `agents://<provider>/<conversation_id>`
 - `agents://<provider>/<conversation_id>/<child_id>`
 - `agents://<provider>?k=v` (write create)

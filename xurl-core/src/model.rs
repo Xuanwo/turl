@@ -180,3 +180,29 @@ pub struct PiEntryListView {
     #[serde(skip_serializing)]
     pub warnings: Vec<String>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ThreadQuery {
+    pub uri: String,
+    pub provider: ProviderKind,
+    pub q: Option<String>,
+    pub limit: usize,
+    pub ignored_params: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ThreadQueryItem {
+    pub thread_id: String,
+    pub uri: String,
+    pub thread_source: String,
+    pub updated_at: Option<String>,
+    pub matched_preview: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ThreadQueryResult {
+    pub query: ThreadQuery,
+    pub items: Vec<ThreadQueryItem>,
+    #[serde(skip_serializing)]
+    pub warnings: Vec<String>,
+}

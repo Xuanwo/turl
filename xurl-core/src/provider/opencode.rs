@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -25,9 +26,14 @@ impl OpencodeProvider {
         self.root.join("opencode.db")
     }
 
-    fn materialized_path(session_id: &str) -> PathBuf {
+    fn materialized_path(&self, session_id: &str) -> PathBuf {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.root.hash(&mut hasher);
+        let root_key = format!("{:016x}", hasher.finish());
+
         std::env::temp_dir()
             .join("xurl-opencode")
+            .join(root_key)
             .join(format!("{session_id}.jsonl"))
     }
 
@@ -425,7 +431,7 @@ impl Provider for OpencodeProvider {
         })?;
 
         let raw = Self::render_jsonl(session_id, messages, parts);
-        let path = Self::materialized_path(session_id);
+        let path = self.materialized_path(session_id);
 
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|source| XurlError::Io {
@@ -598,5 +604,19 @@ mod tests {
             .resolve("ses_43a90e3adffejRgrTdlJa48CtE")
             .expect_err("must fail");
         assert!(format!("{err}").contains("thread not found"));
+    }
+
+    #[test]
+    fn materialized_paths_are_isolated_by_root() {
+        let first_root = tempdir().expect("first tempdir");
+        let second_root = tempdir().expect("second tempdir");
+        let first = OpencodeProvider::new(first_root.path());
+        let second = OpencodeProvider::new(second_root.path());
+        let session_id = "ses_43a90e3adffejRgrTdlJa48CtE";
+
+        let first_path = first.materialized_path(session_id);
+        let second_path = second.materialized_path(session_id);
+
+        assert_ne!(first_path, second_path);
     }
 }

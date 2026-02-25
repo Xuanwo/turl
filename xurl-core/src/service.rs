@@ -1,8 +1,13 @@
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use grep::regex::RegexMatcherBuilder;
+use grep::searcher::{BinaryDetection, SearcherBuilder, sinks::Lossy};
+use regex::RegexBuilder;
 use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
 use walkdir::WalkDir;
@@ -13,7 +18,7 @@ use crate::model::{
     MessageRole, PiEntryListItem, PiEntryListView, PiEntryQuery, ProviderKind, ResolvedThread,
     SubagentDetailView, SubagentExcerptMessage, SubagentLifecycleEvent, SubagentListItem,
     SubagentListView, SubagentQuery, SubagentRelation, SubagentThreadRef, SubagentView,
-    WriteRequest, WriteResult,
+    ThreadQuery, ThreadQueryItem, ThreadQueryResult, WriteRequest, WriteResult,
 };
 use crate::provider::amp::AmpProvider;
 use crate::provider::claude::ClaudeProvider;
@@ -181,6 +186,219 @@ pub fn write_thread(
         ProviderKind::Gemini => GeminiProvider::new(&roots.gemini_root).write(req, sink),
         ProviderKind::Pi => PiProvider::new(&roots.pi_root).write(req, sink),
         ProviderKind::Opencode => OpencodeProvider::new(&roots.opencode_root).write(req, sink),
+    }
+}
+
+#[derive(Debug, Clone)]
+enum QuerySearchTarget {
+    File(PathBuf),
+    Text(String),
+}
+
+#[derive(Debug, Clone)]
+struct QueryCandidate {
+    thread_id: String,
+    uri: String,
+    thread_source: String,
+    updated_at: Option<String>,
+    updated_epoch: Option<u64>,
+    search_target: QuerySearchTarget,
+}
+
+pub fn query_threads(query: &ThreadQuery, roots: &ProviderRoots) -> Result<ThreadQueryResult> {
+    let mut warnings = query
+        .ignored_params
+        .iter()
+        .map(|key| format!("ignored query parameter: {key}"))
+        .collect::<Vec<_>>();
+
+    let mut candidates = match query.provider {
+        ProviderKind::Amp => collect_amp_query_candidates(roots, &mut warnings),
+        ProviderKind::Codex => collect_codex_query_candidates(roots, &mut warnings),
+        ProviderKind::Claude => collect_claude_query_candidates(roots, &mut warnings),
+        ProviderKind::Gemini => collect_gemini_query_candidates(roots, &mut warnings),
+        ProviderKind::Pi => collect_pi_query_candidates(roots, &mut warnings),
+        ProviderKind::Opencode => collect_opencode_query_candidates(
+            roots,
+            &mut warnings,
+            query.q.as_deref().is_some_and(|q| !q.trim().is_empty()),
+        )?,
+    };
+
+    candidates.sort_by_key(|candidate| Reverse(candidate.updated_epoch.unwrap_or(0)));
+
+    if query.limit == 0 {
+        return Ok(ThreadQueryResult {
+            query: query.clone(),
+            items: Vec::new(),
+            warnings,
+        });
+    }
+
+    let items = if let Some(keyword) = query.q.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
+        collect_keyword_matched_items(&candidates, keyword, query.limit)?
+    } else {
+        candidates
+            .iter()
+            .take(query.limit)
+            .map(|candidate| ThreadQueryItem {
+                thread_id: candidate.thread_id.clone(),
+                uri: candidate.uri.clone(),
+                thread_source: candidate.thread_source.clone(),
+                updated_at: candidate.updated_at.clone(),
+                matched_preview: None,
+            })
+            .collect()
+    };
+
+    Ok(ThreadQueryResult {
+        query: query.clone(),
+        items,
+        warnings,
+    })
+}
+
+pub fn render_thread_query_head_markdown(result: &ThreadQueryResult) -> String {
+    let mut output = String::new();
+    output.push_str("---\n");
+    push_yaml_string(&mut output, "uri", &result.query.uri);
+    push_yaml_string(&mut output, "provider", &result.query.provider.to_string());
+    push_yaml_string(&mut output, "mode", "thread_query");
+    push_yaml_string(&mut output, "limit", &result.query.limit.to_string());
+
+    if let Some(q) = &result.query.q {
+        push_yaml_string(&mut output, "q", q);
+    }
+
+    output.push_str("threads:\n");
+    if result.items.is_empty() {
+        output.push_str("  []\n");
+    } else {
+        for item in &result.items {
+            push_yaml_string_with_indent(&mut output, 2, "thread_id", &item.thread_id);
+            push_yaml_string_with_indent(&mut output, 2, "uri", &item.uri);
+            push_yaml_string_with_indent(&mut output, 2, "thread_source", &item.thread_source);
+            if let Some(updated_at) = &item.updated_at {
+                push_yaml_string_with_indent(&mut output, 2, "updated_at", updated_at);
+            }
+            if let Some(matched_preview) = &item.matched_preview {
+                push_yaml_string_with_indent(&mut output, 2, "matched_preview", matched_preview);
+            }
+        }
+    }
+
+    render_warnings(&mut output, &result.warnings);
+    output.push_str("---\n");
+    output
+}
+
+pub fn render_thread_query_markdown(result: &ThreadQueryResult) -> String {
+    let mut output = render_thread_query_head_markdown(result);
+    output.push('\n');
+    output.push_str("# Threads\n\n");
+    output.push_str(&format!("- Provider: `{}`\n", result.query.provider));
+    output.push_str(&format!("- Limit: `{}`\n", result.query.limit));
+    if let Some(q) = &result.query.q {
+        output.push_str(&format!("- Query: `{}`\n", q));
+    } else {
+        output.push_str("- Query: `_none_`\n");
+    }
+    output.push_str(&format!("- Matched: `{}`\n\n", result.items.len()));
+
+    if result.items.is_empty() {
+        output.push_str("_No threads found._\n");
+        return output;
+    }
+
+    for (index, item) in result.items.iter().enumerate() {
+        output.push_str(&format!("## {}. `{}`\n\n", index + 1, item.uri));
+        output.push_str(&format!("- Thread ID: `{}`\n", item.thread_id));
+        output.push_str(&format!("- Thread Source: `{}`\n", item.thread_source));
+        if let Some(updated_at) = &item.updated_at {
+            output.push_str(&format!("- Updated At: `{}`\n", updated_at));
+        }
+        if let Some(matched_preview) = &item.matched_preview {
+            output.push_str(&format!("- Match: `{}`\n", matched_preview));
+        }
+        output.push('\n');
+    }
+
+    output
+}
+
+fn collect_keyword_matched_items(
+    candidates: &[QueryCandidate],
+    keyword: &str,
+    limit: usize,
+) -> Result<Vec<ThreadQueryItem>> {
+    let mut items = Vec::new();
+    for candidate in candidates {
+        if items.len() >= limit {
+            break;
+        }
+        let matched_preview = match &candidate.search_target {
+            QuerySearchTarget::File(path) => match_first_preview_in_file(path, keyword)?,
+            QuerySearchTarget::Text(text) => match_first_preview_in_text(text, keyword),
+        };
+        if let Some(matched_preview) = matched_preview {
+            items.push(ThreadQueryItem {
+                thread_id: candidate.thread_id.clone(),
+                uri: candidate.uri.clone(),
+                thread_source: candidate.thread_source.clone(),
+                updated_at: candidate.updated_at.clone(),
+                matched_preview: Some(matched_preview),
+            });
+        }
+    }
+    Ok(items)
+}
+
+fn match_first_preview_in_file(path: &Path, keyword: &str) -> Result<Option<String>> {
+    let mut matcher_builder = RegexMatcherBuilder::new();
+    matcher_builder.fixed_strings(true).case_insensitive(true);
+    let matcher = matcher_builder
+        .build(keyword)
+        .map_err(|err| XurlError::InvalidMode(format!("invalid keyword query: {err}")))?;
+    let mut searcher = SearcherBuilder::new()
+        .binary_detection(BinaryDetection::quit(b'\x00'))
+        .line_number(true)
+        .build();
+    let mut preview = None::<String>;
+    searcher
+        .search_path(
+            &matcher,
+            path,
+            Lossy(|_, line| {
+                let line = line.trim();
+                if line.is_empty() {
+                    return Ok(true);
+                }
+                preview = Some(truncate_preview(line, 160));
+                Ok(false)
+            }),
+        )
+        .map_err(|source| XurlError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    Ok(preview)
+}
+
+fn match_first_preview_in_text(text: &str, keyword: &str) -> Option<String> {
+    let matcher = RegexBuilder::new(&regex::escape(keyword))
+        .case_insensitive(true)
+        .build()
+        .ok()?;
+    let found = matcher.find(text)?;
+    let line_start = text[..found.start()].rfind('\n').map_or(0, |idx| idx + 1);
+    let line_end = text[found.end()..]
+        .find('\n')
+        .map_or(text.len(), |idx| found.end() + idx);
+    let line = text[line_start..line_end].trim();
+    if line.is_empty() {
+        Some(truncate_preview(text, 160))
+    } else {
+        Some(truncate_preview(line, 160))
     }
 }
 
@@ -3482,6 +3700,493 @@ fn extract_last_timestamp(raw: &str) -> Option<String> {
     }
 
     None
+}
+fn collect_amp_query_candidates(
+    roots: &ProviderRoots,
+    warnings: &mut Vec<String>,
+) -> Vec<QueryCandidate> {
+    let threads_root = roots.amp_root.join("threads");
+    collect_simple_file_candidates(
+        ProviderKind::Amp,
+        &threads_root,
+        |path| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+        },
+        |path| {
+            path.file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(ToString::to_string)
+        },
+        warnings,
+    )
+}
+
+fn collect_codex_query_candidates(
+    roots: &ProviderRoots,
+    warnings: &mut Vec<String>,
+) -> Vec<QueryCandidate> {
+    let mut candidates = Vec::new();
+    candidates.extend(collect_simple_file_candidates(
+        ProviderKind::Codex,
+        &roots.codex_root.join("sessions"),
+        |path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl"))
+        },
+        extract_codex_rollout_id,
+        warnings,
+    ));
+    candidates.extend(collect_simple_file_candidates(
+        ProviderKind::Codex,
+        &roots.codex_root.join("archived_sessions"),
+        |path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl"))
+        },
+        extract_codex_rollout_id,
+        warnings,
+    ));
+    candidates
+}
+
+fn collect_claude_query_candidates(
+    roots: &ProviderRoots,
+    warnings: &mut Vec<String>,
+) -> Vec<QueryCandidate> {
+    let projects_root = roots.claude_root.join("projects");
+    if !projects_root.exists() {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    for entry in WalkDir::new(&projects_root)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.into_path();
+        if path.file_name().and_then(|name| name.to_str()) == Some("sessions-index.json") {
+            continue;
+        }
+        if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+            continue;
+        }
+
+        if let Some((thread_id, uri)) = extract_claude_thread_identity(&path) {
+            candidates.push(make_file_candidate(thread_id, uri, path));
+        } else {
+            warnings.push(format!(
+                "skipped claude transcript with unknown thread identity: {}",
+                path.display()
+            ));
+        }
+    }
+
+    candidates
+}
+
+fn collect_gemini_query_candidates(
+    roots: &ProviderRoots,
+    warnings: &mut Vec<String>,
+) -> Vec<QueryCandidate> {
+    let tmp_root = roots.gemini_root.join("tmp");
+    if !tmp_root.exists() {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    for entry in WalkDir::new(&tmp_root)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.into_path();
+        let is_session_file = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("session-") && name.ends_with(".json"));
+        let in_chats_dir = path
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name == "chats");
+        if !(is_session_file && in_chats_dir) {
+            continue;
+        }
+
+        let raw = match fs::read_to_string(&path) {
+            Ok(raw) => raw,
+            Err(err) => {
+                warnings.push(format!(
+                    "failed reading gemini transcript {}: {err}",
+                    path.display()
+                ));
+                continue;
+            }
+        };
+        let value = match serde_json::from_str::<Value>(&raw) {
+            Ok(value) => value,
+            Err(err) => {
+                warnings.push(format!(
+                    "failed parsing gemini transcript {} as json: {err}",
+                    path.display()
+                ));
+                continue;
+            }
+        };
+        let Some(session_id) = value.get("sessionId").and_then(Value::as_str) else {
+            warnings.push(format!(
+                "gemini transcript does not contain sessionId: {}",
+                path.display()
+            ));
+            continue;
+        };
+        if !is_uuid_session_id(session_id) {
+            warnings.push(format!(
+                "gemini transcript contains non-uuid sessionId={session_id}: {}",
+                path.display()
+            ));
+            continue;
+        }
+        let session_id = session_id.to_ascii_lowercase();
+        candidates.push(make_file_candidate(
+            session_id.clone(),
+            format!("agents://gemini/{session_id}"),
+            path,
+        ));
+    }
+
+    candidates
+}
+
+fn collect_pi_query_candidates(
+    roots: &ProviderRoots,
+    warnings: &mut Vec<String>,
+) -> Vec<QueryCandidate> {
+    let sessions_root = roots.pi_root.join("sessions");
+    if !sessions_root.exists() {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    for entry in WalkDir::new(&sessions_root)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.into_path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+            continue;
+        }
+
+        match extract_pi_session_id_from_header(&path) {
+            Ok(Some(session_id)) => {
+                let session_id = session_id.to_ascii_lowercase();
+                candidates.push(make_file_candidate(
+                    session_id.clone(),
+                    format!("agents://pi/{session_id}"),
+                    path,
+                ));
+            }
+            Ok(None) => {}
+            Err(err) => warnings.push(err),
+        }
+    }
+
+    candidates
+}
+
+fn collect_opencode_query_candidates(
+    roots: &ProviderRoots,
+    warnings: &mut Vec<String>,
+    with_search_text: bool,
+) -> Result<Vec<QueryCandidate>> {
+    let db_path = roots.opencode_root.join("opencode.db");
+    if !db_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let conn = Connection::open_with_flags(&db_path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(
+        |source| XurlError::Sqlite {
+            path: db_path.clone(),
+            source,
+        },
+    )?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT s.id, COALESCE(MAX(m.time_created), 0)
+             FROM session s
+             LEFT JOIN message m ON m.session_id = s.id
+             GROUP BY s.id
+             ORDER BY COALESCE(MAX(m.time_created), 0) DESC, s.id DESC",
+        )
+        .map_err(|source| XurlError::Sqlite {
+            path: db_path.clone(),
+            source,
+        })?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)
+                    .ok()
+                    .and_then(|stamp| u64::try_from(stamp).ok()),
+            ))
+        })
+        .map_err(|source| XurlError::Sqlite {
+            path: db_path.clone(),
+            source,
+        })?;
+
+    let mut candidates = Vec::new();
+    for row in rows {
+        let (session_id, updated_epoch) = row.map_err(|source| XurlError::Sqlite {
+            path: db_path.clone(),
+            source,
+        })?;
+        if AgentsUri::parse(&format!("opencode://{session_id}")).is_err() {
+            warnings.push(format!(
+                "skipped opencode session with invalid id={session_id} from {}",
+                db_path.display()
+            ));
+            continue;
+        }
+        let search_target = if with_search_text {
+            QuerySearchTarget::Text(fetch_opencode_search_text(&conn, &db_path, &session_id)?)
+        } else {
+            QuerySearchTarget::Text(String::new())
+        };
+
+        candidates.push(QueryCandidate {
+            thread_id: session_id.clone(),
+            uri: format!("agents://opencode/{session_id}"),
+            thread_source: format!("{}#session:{session_id}", db_path.display()),
+            updated_at: updated_epoch.map(|value| value.to_string()),
+            updated_epoch,
+            search_target,
+        });
+    }
+
+    Ok(candidates)
+}
+
+fn fetch_opencode_search_text(
+    conn: &Connection,
+    db_path: &Path,
+    session_id: &str,
+) -> Result<String> {
+    let mut chunks = Vec::new();
+
+    let mut message_stmt = conn
+        .prepare(
+            "SELECT data
+             FROM message
+             WHERE session_id = ?1
+             ORDER BY time_created ASC, id ASC",
+        )
+        .map_err(|source| XurlError::Sqlite {
+            path: db_path.to_path_buf(),
+            source,
+        })?;
+    let message_rows = message_stmt
+        .query_map([session_id], |row| row.get::<_, String>(0))
+        .map_err(|source| XurlError::Sqlite {
+            path: db_path.to_path_buf(),
+            source,
+        })?;
+    for row in message_rows {
+        let value = row.map_err(|source| XurlError::Sqlite {
+            path: db_path.to_path_buf(),
+            source,
+        })?;
+        chunks.push(value);
+    }
+
+    let mut part_stmt = conn
+        .prepare(
+            "SELECT data
+             FROM part
+             WHERE session_id = ?1
+             ORDER BY time_created ASC, id ASC",
+        )
+        .map_err(|source| XurlError::Sqlite {
+            path: db_path.to_path_buf(),
+            source,
+        })?;
+    let part_rows = part_stmt
+        .query_map([session_id], |row| row.get::<_, String>(0))
+        .map_err(|source| XurlError::Sqlite {
+            path: db_path.to_path_buf(),
+            source,
+        })?;
+    for row in part_rows {
+        let value = row.map_err(|source| XurlError::Sqlite {
+            path: db_path.to_path_buf(),
+            source,
+        })?;
+        chunks.push(value);
+    }
+
+    Ok(chunks.join("\n"))
+}
+
+fn collect_simple_file_candidates<F, G>(
+    provider: ProviderKind,
+    root: &Path,
+    path_filter: F,
+    thread_id_extractor: G,
+    warnings: &mut Vec<String>,
+) -> Vec<QueryCandidate>
+where
+    F: Fn(&Path) -> bool,
+    G: Fn(&Path) -> Option<String>,
+{
+    if !root.exists() {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.into_path();
+        if !path_filter(&path) {
+            continue;
+        }
+        let Some(thread_id) = thread_id_extractor(&path) else {
+            warnings.push(format!(
+                "skipped {} transcript with unknown thread id: {}",
+                provider,
+                path.display()
+            ));
+            continue;
+        };
+        candidates.push(make_file_candidate(
+            thread_id.clone(),
+            format!("agents://{provider}/{thread_id}"),
+            path,
+        ));
+    }
+
+    candidates
+}
+
+fn make_file_candidate(thread_id: String, uri: String, path: PathBuf) -> QueryCandidate {
+    QueryCandidate {
+        thread_id,
+        uri,
+        thread_source: path.display().to_string(),
+        updated_at: modified_timestamp_string(&path),
+        updated_epoch: file_modified_epoch(&path),
+        search_target: QuerySearchTarget::File(path),
+    }
+}
+
+fn extract_codex_rollout_id(path: &Path) -> Option<String> {
+    let name = path.file_name()?.to_str()?;
+    let stem = name.strip_suffix(".jsonl")?;
+    if stem.len() < 36 {
+        return None;
+    }
+    let thread_id = &stem[stem.len() - 36..];
+    if is_uuid_session_id(thread_id) {
+        Some(thread_id.to_ascii_lowercase())
+    } else {
+        None
+    }
+}
+
+fn extract_claude_thread_identity(path: &Path) -> Option<(String, String)> {
+    let file_name = path.file_name()?.to_str()?;
+    if let Some(agent_id) = file_name
+        .strip_prefix("agent-")
+        .and_then(|name| name.strip_suffix(".jsonl"))
+    {
+        let subagents_dir = path.parent()?;
+        if subagents_dir.file_name()?.to_str()? != "subagents" {
+            return None;
+        }
+        let main_thread_id = subagents_dir.parent()?.file_name()?.to_str()?.to_string();
+        return Some((
+            format!("{main_thread_id}/{agent_id}"),
+            format!("agents://claude/{main_thread_id}/{agent_id}"),
+        ));
+    }
+
+    if let Some(session_id) = extract_claude_session_id_from_header(path) {
+        return Some((session_id.clone(), format!("agents://claude/{session_id}")));
+    }
+
+    let file_stem = path.file_stem()?.to_str()?;
+    if is_uuid_session_id(file_stem) {
+        let session_id = file_stem.to_ascii_lowercase();
+        return Some((session_id.clone(), format!("agents://claude/{session_id}")));
+    }
+
+    None
+}
+
+fn extract_claude_session_id_from_header(path: &Path) -> Option<String> {
+    let file = fs::File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    for line in reader.lines().take(30).flatten() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        let session_id = value.get("sessionId").and_then(Value::as_str)?;
+        if is_uuid_session_id(session_id) {
+            return Some(session_id.to_ascii_lowercase());
+        }
+    }
+    None
+}
+
+fn extract_pi_session_id_from_header(path: &Path) -> std::result::Result<Option<String>, String> {
+    let file =
+        fs::File::open(path).map_err(|err| format!("failed opening {}: {err}", path.display()))?;
+    let reader = BufReader::new(file);
+    let Some(first_non_empty) = reader
+        .lines()
+        .take(30)
+        .filter_map(std::result::Result::ok)
+        .find(|line| !line.trim().is_empty())
+    else {
+        return Ok(None);
+    };
+    let value = serde_json::from_str::<Value>(&first_non_empty)
+        .map_err(|err| format!("failed parsing pi header {}: {err}", path.display()))?;
+    if value.get("type").and_then(Value::as_str) != Some("session") {
+        return Ok(None);
+    }
+    let Some(session_id) = value.get("id").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    if !is_uuid_session_id(session_id) {
+        return Err(format!(
+            "pi session header contains invalid session id={session_id}: {}",
+            path.display()
+        ));
+    }
+    Ok(Some(session_id.to_ascii_lowercase()))
 }
 
 fn main_thread_uri(uri: &AgentsUri) -> AgentsUri {

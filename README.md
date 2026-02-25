@@ -7,6 +7,7 @@
 ## What xURL Can Do
 
 - Read an agent conversation as markdown.
+- Query recent threads and keyword matches for a provider.
 - Discover subagent/branch navigation targets.
 - Start a new conversation with agents.
 - Continue an existing conversation with follow-up prompts.
@@ -31,6 +32,14 @@ Read an agent conversation:
 
 ```bash
 xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
+```
+
+Query provider threads:
+
+```bash
+xurl agents://codex
+xurl 'agents://codex?q=spawn_agent'
+xurl 'agents://claude?q=agent&limit=5'
 ```
 
 Discover child targets:
@@ -88,6 +97,11 @@ Options:
 - `-d, --data <DATA>`: write payload (repeatable).
 - `-o, --output <PATH>`: write command output to file.
 
+Collection query parameters (for `agents://<provider>` read mode):
+
+- `q=<keyword>`: keyword search in provider thread data.
+- `limit=<n>`: result count, default is `10`.
+
 `--data` supports:
 
 - text: `-d "hello"`
@@ -141,8 +155,9 @@ Ignore and warning rules:
 
 ## URI Formats
 
-Canonical read forms:
+Canonical query/read forms:
 
+- `agents://<provider>[?q=<keyword>&limit=<n>]` (thread discovery/query mode)
 - `agents://<provider>/<conversation_id>`
 - `agents://<provider>/<conversation_id>/<child_id>`
 
@@ -150,6 +165,13 @@ Canonical write forms:
 
 - `agents://<provider>?k=v` (create)
 - `agents://<provider>/<conversation_id>?k=v` (append)
+
+Examples:
+
+```text
+agents://codex?q=spawn_agent&limit=10
+agents://codex/threads/<conversation_id>
+```
 
 Legacy read compatibility:
 

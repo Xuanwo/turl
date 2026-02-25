@@ -691,6 +691,116 @@ fn raw_flag_is_rejected() {
 }
 
 #[test]
+fn amp_collection_query_outputs_markdown() {
+    let temp = setup_amp_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("XDG_DATA_HOME", temp.path())
+        .arg("agents://amp?q=world&limit=1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Threads"))
+        .stdout(predicate::str::contains("- Limit: `1`"))
+        .stdout(predicate::str::contains(format!(
+            "agents://amp/{AMP_SESSION_ID}"
+        )))
+        .stdout(predicate::str::contains("- Match:"));
+}
+
+#[test]
+fn codex_collection_query_outputs_markdown() {
+    let temp = setup_codex_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .arg("agents://codex?q=hello&limit=1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Threads"))
+        .stdout(predicate::str::contains("- Limit: `1`"))
+        .stdout(predicate::str::contains(format!(
+            "agents://codex/{SESSION_ID}"
+        )))
+        .stdout(predicate::str::contains("- Match:"));
+}
+
+#[test]
+fn claude_collection_query_outputs_markdown() {
+    let temp = setup_claude_subagent_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CLAUDE_CONFIG_DIR", temp.path())
+        .arg("agents://claude?q=agent&limit=1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Threads"))
+        .stdout(predicate::str::contains("- Limit: `1`"))
+        .stdout(predicate::str::contains("agents://claude/"))
+        .stdout(predicate::str::contains("- Match:"));
+}
+
+#[test]
+fn gemini_collection_query_outputs_markdown() {
+    let temp = setup_gemini_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("GEMINI_CLI_HOME", temp.path())
+        .arg("agents://gemini?q=hello&limit=1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Threads"))
+        .stdout(predicate::str::contains("- Limit: `1`"))
+        .stdout(predicate::str::contains(format!(
+            "agents://gemini/{GEMINI_SESSION_ID}"
+        )))
+        .stdout(predicate::str::contains("- Match:"));
+}
+
+#[test]
+fn pi_collection_query_outputs_markdown() {
+    let temp = setup_pi_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PI_CODING_AGENT_DIR", temp.path().join("agent"))
+        .arg("agents://pi?q=root&limit=1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Threads"))
+        .stdout(predicate::str::contains("- Limit: `1`"))
+        .stdout(predicate::str::contains(format!(
+            "agents://pi/{PI_SESSION_ID}"
+        )))
+        .stdout(predicate::str::contains("- Match:"));
+}
+
+#[test]
+fn opencode_collection_query_outputs_markdown() {
+    let temp = setup_opencode_subagent_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("XDG_DATA_HOME", temp.path())
+        .arg("agents://opencode?q=help&limit=1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Threads"))
+        .stdout(predicate::str::contains("- Limit: `1`"))
+        .stdout(predicate::str::contains("agents://opencode/"))
+        .stdout(predicate::str::contains("- Match:"));
+}
+
+#[test]
+fn collection_query_not_found_outputs_empty_list() {
+    let temp = setup_codex_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .arg("agents://codex?q=not-exist")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("_No threads found._"));
+}
+
+#[test]
 fn head_flag_outputs_frontmatter_only() {
     let temp = setup_codex_tree();
 
