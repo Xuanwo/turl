@@ -96,27 +96,13 @@ xurl -o /tmp/conversation.md agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 xurl [OPTIONS] <URI>
 ```
 
-Options:
-
 - `-I, --head`: output frontmatter/discovery info only.
 - `-d, --data <DATA>`: write payload (repeatable).
+  - text: `-d "hello"`
+  - file: `-d @prompt.txt`
+  - stdin: `-d @-`
 - `-o, --output <PATH>`: write command output to file.
-
-`--data` supports:
-
-- text: `-d "hello"`
-- file: `-d @prompt.txt`
-- stdin: `-d @-`
-
-Mode rules:
-
 - `-I/--head` cannot be combined with `-d/--data`.
-- child URI write is rejected in write mode.
-
-Write output:
-
-- assistant text: `stdout` (or `--output` file).
-- canonical URI: `stderr` as `created: ...` / `updated: ...`.
 
 ## URI Reference
 
@@ -142,24 +128,13 @@ Create query keys:
   - `workdir=<dir>`: working directory for the agent command (last-wins).
   - `add_dir=<dir>`: additional directory (repeatable).
 - passthrough:
-  - `k=v` -> `--k v`
-  - `k` or `k=` -> `--k`
+  - `k=v`: pass custom option with value.
+  - `k` or `k=`: pass custom flag without value.
   - repeated keys preserve URI order.
 
 Append query keys:
 
 - all query keys are ignored with warnings (thread options are fixed at creation time).
-
-Create key mapping:
-
-- `workdir`: always applied (`cwd` fallback for all providers), plus:
-  - Codex: `--cd`
-  - OpenCode: `--dir`
-- `add_dir`:
-  - Codex: `--add-dir`
-  - Claude: `--add-dir`
-  - Gemini: `--include-directories`
-  - Amp/Pi/OpenCode: ignored with warning
 
 Validation and ignore rules:
 

@@ -140,18 +140,12 @@ cat prompt.md | xurl agents://claude -d @-
 - Base form: `xurl [OPTIONS] <URI>`
 - `-I, --head`: frontmatter/discovery only
 - `-d, --data`: write payload, repeatable
+  - text: `-d "hello"`
+  - file: `-d @prompt.txt`
+  - stdin: `-d @-`
 - `-o, --output`: write command output to file
-
-Mode rules:
-
-- child URI write is rejected
 - `--head` and `--data` cannot be combined
 - multiple `-d` values are newline-joined
-
-Write output:
-
-- assistant text: `stdout` (or `--output` file)
-- canonical URI: `stderr` as `created: ...` / `updated: ...`
 
 ## URI Reference
 
@@ -174,18 +168,12 @@ Read query keys:
 Create query keys:
 
 - standard: `workdir`, `add_dir` (repeatable)
-- unknown keys are passthrough (`k=v` -> `--k v`, `k` -> `--k`)
+- unknown keys are passthrough (`k=v` with value, `k` without value)
 - repeated keys preserve URI order
 - reserved conflicting keys are ignored with `warning:` on stderr
 - `workdir` must be non-empty and directory-valid
 - empty `add_dir` is ignored with warning
 - append mode ignores all URI query keys with warnings
-
-Provider mapping:
-
-- `workdir`: always effective by process `cwd`; Codex also gets `--cd`, OpenCode also gets `--dir`
-- `add_dir`: Codex `--add-dir`, Claude `--add-dir`, Gemini `--include-directories`
-- `add_dir`: ignored with warning for Amp, Pi, OpenCode
 
 Child drill-down URI forms:
 
