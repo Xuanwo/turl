@@ -66,7 +66,6 @@ Drill down into a discovered child target:
 xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592/019c87fb-38b9-7843-92b1-832f02598495
 ```
 
-OpenCode child linkage is validated via sqlite `session.parent_id`.
 Start a new agent conversation:
 
 ```bash
@@ -103,68 +102,70 @@ Options:
 - `-d, --data <DATA>`: write payload (repeatable).
 - `-o, --output <PATH>`: write command output to file.
 
-Collection query parameters (for `agents://<provider>` read mode):
-
-- `q=<keyword>`: keyword search in provider thread data.
-- `limit=<n>`: result count, default is `10`.
-
 `--data` supports:
 
 - text: `-d "hello"`
 - file: `-d @prompt.txt`
 - stdin: `-d @-`
 
-Write mode URI rules:
+Mode rules:
 
-- `agents://<provider>` with `-d` creates a conversation.
-- `agents://<provider>/<conversation_id>` with `-d` appends to a conversation.
-- `agents://<provider>/<conversation_id>/<child_id>` is rejected in write mode.
 - `-I/--head` cannot be combined with `-d/--data`.
-- append mode ignores URI query parameters (thread options are fixed at creation time).
+- child URI write is rejected in write mode.
 
-## Write Query Parameters
+Write output:
 
-Create mode parameters use flat URI query keys.
+- assistant text: `stdout` (or `--output` file).
+- canonical URI: `stderr` as `created: ...` / `updated: ...`.
 
-Standard keys:
+## URI Reference
 
-- `workdir=<dir>`: working directory for the agent command. Repeated values use last-wins.
-- `add_dir=<dir>`: additional directory. Repeat the key to pass multiple directories.
-
-Provider behavior:
-
-- `workdir` is always applied. Codex also gets `--cd`, OpenCode also gets `--dir`, and all providers use process `cwd`.
-- `add_dir` is mapped for Codex (`--add-dir`), Claude (`--add-dir`), and Gemini (`--include-directories`).
-- `add_dir` is ignored with warning for Amp, Pi, and OpenCode.
-
-Unknown keys:
-
-- `k=v` is passed through as `--k v`.
-- `k` or `k=` is passed through as `--k`.
-- repeated keys preserve URI order.
-
-Append mode:
-
-- URI query parameters are ignored with warnings.
-
-Ignore and warning rules:
-
-- Reserved keys that would conflict with xurl-managed flags are ignored with `warning:` on stderr.
-- Empty `workdir` is rejected as an error.
-- Empty `add_dir` is ignored with warning.
-
-## URI Formats
-
-Canonical query/read forms:
+Read/discovery URIs:
 
 - `agents://<provider>[?q=<keyword>&limit=<n>]` (thread discovery/query mode)
 - `agents://<provider>/<conversation_id>`
 - `agents://<provider>/<conversation_id>/<child_id>`
 
-Canonical write forms:
+Write URIs:
 
 - `agents://<provider>?k=v` (create)
 - `agents://<provider>/<conversation_id>` (append)
+
+Read query keys:
+
+- `q=<keyword>`: keyword search in provider thread data.
+- `limit=<n>`: result count, default is `10`.
+
+Create query keys:
+
+- standard:
+  - `workdir=<dir>`: working directory for the agent command (last-wins).
+  - `add_dir=<dir>`: additional directory (repeatable).
+- passthrough:
+  - `k=v` -> `--k v`
+  - `k` or `k=` -> `--k`
+  - repeated keys preserve URI order.
+
+Append query keys:
+
+- all query keys are ignored with warnings (thread options are fixed at creation time).
+
+Create key mapping:
+
+- `workdir`: always applied (`cwd` fallback for all providers), plus:
+  - Codex: `--cd`
+  - OpenCode: `--dir`
+- `add_dir`:
+  - Codex: `--add-dir`
+  - Claude: `--add-dir`
+  - Gemini: `--include-directories`
+  - Amp/Pi/OpenCode: ignored with warning
+
+Validation and ignore rules:
+
+- reserved conflicting keys are ignored with `warning:` on stderr.
+- empty `workdir` is rejected as an error.
+- empty `add_dir` is ignored with warning.
 
 Examples:
 

@@ -135,35 +135,43 @@ xurl agents://codex -d @prompt.txt
 cat prompt.md | xurl agents://claude -d @-
 ```
 
-## Command Rules
+## Command Reference
 
 - Base form: `xurl [OPTIONS] <URI>`
 - `-I, --head`: frontmatter/discovery only
 - `-d, --data`: write payload, repeatable
 - `-o, --output`: write command output to file
 
-Collection query rules:
+Mode rules:
 
-- `agents://<provider>` in read mode returns latest threads.
-- `q` and `limit` query params are supported in read mode.
-- `q` is keyword search only; semantic interpretation stays in caller agent.
-
-Write mode rules:
-
-- `agents://<provider> -d ...` => create
-- `agents://<provider>/<conversation_id> -d ...` => append
 - child URI write is rejected
 - `--head` and `--data` cannot be combined
 - multiple `-d` values are newline-joined
-- create parameters come from URI query keys
-- append URI query parameters are ignored with warnings
 
 Write output:
 
 - assistant text: `stdout` (or `--output` file)
 - canonical URI: `stderr` as `created: ...` / `updated: ...`
 
-Write query keys (create mode):
+## URI Reference
+
+Read/discovery URIs:
+
+- `agents://<provider>?q=<keyword>&limit=<n>`
+- `agents://<provider>/<conversation_id>`
+- `agents://<provider>/<conversation_id>/<child_id>`
+
+Write URIs:
+
+- `agents://<provider>?k=v` (create)
+- `agents://<provider>/<conversation_id>` (append)
+
+Read query keys:
+
+- `q`: keyword search only
+- `limit`: max result count, default `10`
+
+Create query keys:
 
 - standard: `workdir`, `add_dir` (repeatable)
 - unknown keys are passthrough (`k=v` -> `--k v`, `k` -> `--k`)
@@ -171,23 +179,13 @@ Write query keys (create mode):
 - reserved conflicting keys are ignored with `warning:` on stderr
 - `workdir` must be non-empty and directory-valid
 - empty `add_dir` is ignored with warning
-- append mode ignores all URI query keys
+- append mode ignores all URI query keys with warnings
 
 Provider mapping:
 
 - `workdir`: always effective by process `cwd`; Codex also gets `--cd`, OpenCode also gets `--dir`
 - `add_dir`: Codex `--add-dir`, Claude `--add-dir`, Gemini `--include-directories`
 - `add_dir`: ignored with warning for Amp, Pi, OpenCode
-
-## URI Formats
-
-Canonical:
-
-- `agents://<provider>?q=<keyword>&limit=<n>`
-- `agents://<provider>/<conversation_id>`
-- `agents://<provider>/<conversation_id>/<child_id>`
-- `agents://<provider>?k=v` (write create)
-- `agents://<provider>/<conversation_id>` (write append)
 
 Child drill-down URI forms:
 
