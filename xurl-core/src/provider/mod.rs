@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::env;
 use std::path::PathBuf;
 
@@ -12,6 +13,42 @@ pub mod codex;
 pub mod gemini;
 pub mod opencode;
 pub mod pi;
+
+pub(crate) fn append_passthrough_args(
+    args: &mut Vec<String>,
+    passthrough: &[(String, Option<String>)],
+    ignored_keys: &[&str],
+    warnings: &mut Vec<String>,
+) {
+    let ignored = ignored_keys
+        .iter()
+        .map(|key| key.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+
+    for (key, value) in passthrough {
+        let normalized = key.trim().to_ascii_lowercase();
+        if normalized.is_empty() || normalized.starts_with('-') {
+            warnings.push(format!(
+                "ignored query parameter `{key}`: invalid flag name"
+            ));
+            continue;
+        }
+
+        if ignored.contains(&normalized) {
+            warnings.push(format!(
+                "ignored query parameter `{key}`: reserved by xurl for this provider"
+            ));
+            continue;
+        }
+
+        args.push(format!("--{key}"));
+        if let Some(value) = value
+            && !value.is_empty()
+        {
+            args.push(value.clone());
+        }
+    }
+}
 
 pub trait WriteEventSink {
     fn on_session_ready(&mut self, provider: ProviderKind, session_id: &str) -> Result<()>;

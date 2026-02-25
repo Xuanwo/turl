@@ -11,7 +11,7 @@ use walkdir::WalkDir;
 use crate::error::{Result, XurlError};
 use crate::jsonl;
 use crate::model::{ProviderKind, ResolutionMeta, ResolvedThread, WriteRequest, WriteResult};
-use crate::provider::{Provider, WriteEventSink};
+use crate::provider::{Provider, WriteEventSink, append_passthrough_args};
 
 #[derive(Debug, Clone)]
 pub struct PiProvider {
@@ -96,24 +96,27 @@ impl PiProvider {
         std::env::var("XURL_PI_BIN").unwrap_or_else(|_| "pi".to_string())
     }
 
-    fn spawn_pi_command(args: &[&str]) -> Result<std::process::Child> {
+    fn spawn_pi_command(args: &[String], workdir: Option<&Path>) -> Result<std::process::Child> {
         let bin = Self::pi_bin();
-        Command::new(&bin)
+        let mut command = Command::new(&bin);
+        command
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|source| {
-                if source.kind() == std::io::ErrorKind::NotFound {
-                    XurlError::CommandNotFound { command: bin }
-                } else {
-                    XurlError::Io {
-                        path: PathBuf::from(bin),
-                        source,
-                    }
+            .stderr(Stdio::piped());
+        if let Some(workdir) = workdir {
+            command.current_dir(workdir);
+        }
+        command.spawn().map_err(|source| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                XurlError::CommandNotFound { command: bin }
+            } else {
+                XurlError::Io {
+                    path: PathBuf::from(bin),
+                    source,
                 }
-            })
+            }
+        })
     }
 
     fn extract_assistant_text(message: &Value) -> Option<String> {
@@ -145,11 +148,12 @@ impl PiProvider {
 
     fn run_write(
         &self,
-        args: &[&str],
+        args: &[String],
         req: &WriteRequest,
         sink: &mut dyn WriteEventSink,
+        warnings: Vec<String>,
     ) -> Result<WriteResult> {
-        let mut child = Self::spawn_pi_command(args)?;
+        let mut child = Self::spawn_pi_command(args, req.options.workdir.as_deref())?;
         let stdout = child
             .stdout
             .take()
@@ -248,6 +252,7 @@ impl PiProvider {
             provider: ProviderKind::Pi,
             session_id,
             final_text,
+            warnings,
         })
     }
 }
@@ -291,24 +296,37 @@ impl Provider for PiProvider {
     }
 
     fn write(&self, req: &WriteRequest, sink: &mut dyn WriteEventSink) -> Result<WriteResult> {
+        let mut warnings = Vec::new();
+        if !req.options.add_dirs.is_empty() {
+            warnings.push(
+                "ignored query parameter `add_dir`: pi CLI has no compatible option".to_string(),
+            );
+        }
+        let mut args = Vec::new();
         if let Some(session_id) = req.session_id.as_deref() {
             let resolved = self.resolve(session_id)?;
             let session_path = resolved.path.to_string_lossy().to_string();
-            self.run_write(
-                &[
-                    "--session",
-                    session_path.as_str(),
-                    "-p",
-                    req.prompt.as_str(),
-                    "--mode",
-                    "json",
-                ],
-                req,
-                sink,
-            )
+            args.push("--session".to_string());
+            args.push(session_path);
+            args.push("-p".to_string());
+            args.push(req.prompt.clone());
+            args.push("--mode".to_string());
+            args.push("json".to_string());
         } else {
-            self.run_write(&["-p", req.prompt.as_str(), "--mode", "json"], req, sink)
+            args.push("-p".to_string());
+            args.push(req.prompt.clone());
+            args.push("--mode".to_string());
+            args.push("json".to_string());
         }
+        append_passthrough_args(
+            &mut args,
+            &req.options.passthrough,
+            &[
+                "workdir", "add_dir", "mode", "session", "resume", "continue", "prompt", "p",
+            ],
+            &mut warnings,
+        );
+        self.run_write(&args, req, sink, warnings)
     }
 }
 

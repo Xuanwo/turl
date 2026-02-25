@@ -28,7 +28,7 @@ use crate::provider::opencode::OpencodeProvider;
 use crate::provider::pi::PiProvider;
 use crate::provider::{Provider, ProviderRoots, WriteEventSink};
 use crate::render;
-use crate::uri::{ThreadUri, is_uuid_session_id};
+use crate::uri::{AgentsUri, is_uuid_session_id};
 
 const STATUS_PENDING_INIT: &str = "pendingInit";
 const STATUS_RUNNING: &str = "running";
@@ -161,16 +161,15 @@ impl Default for PiDiscoveredChild {
     }
 }
 
-pub fn resolve_thread(uri: &ThreadUri, roots: &ProviderRoots) -> Result<ResolvedThread> {
+pub fn resolve_thread(uri: &AgentsUri, roots: &ProviderRoots) -> Result<ResolvedThread> {
+    let session_id = uri.require_session_id()?;
     match uri.provider {
-        ProviderKind::Amp => AmpProvider::new(&roots.amp_root).resolve(&uri.session_id),
-        ProviderKind::Codex => CodexProvider::new(&roots.codex_root).resolve(&uri.session_id),
-        ProviderKind::Claude => ClaudeProvider::new(&roots.claude_root).resolve(&uri.session_id),
-        ProviderKind::Gemini => GeminiProvider::new(&roots.gemini_root).resolve(&uri.session_id),
-        ProviderKind::Pi => PiProvider::new(&roots.pi_root).resolve(&uri.session_id),
-        ProviderKind::Opencode => {
-            OpencodeProvider::new(&roots.opencode_root).resolve(&uri.session_id)
-        }
+        ProviderKind::Amp => AmpProvider::new(&roots.amp_root).resolve(session_id),
+        ProviderKind::Codex => CodexProvider::new(&roots.codex_root).resolve(session_id),
+        ProviderKind::Claude => ClaudeProvider::new(&roots.claude_root).resolve(session_id),
+        ProviderKind::Gemini => GeminiProvider::new(&roots.gemini_root).resolve(session_id),
+        ProviderKind::Pi => PiProvider::new(&roots.pi_root).resolve(session_id),
+        ProviderKind::Opencode => OpencodeProvider::new(&roots.opencode_root).resolve(session_id),
     }
 }
 
@@ -420,13 +419,13 @@ fn read_thread_raw(path: &Path) -> Result<String> {
     })
 }
 
-pub fn render_thread_markdown(uri: &ThreadUri, resolved: &ResolvedThread) -> Result<String> {
+pub fn render_thread_markdown(uri: &AgentsUri, resolved: &ResolvedThread) -> Result<String> {
     let raw = read_thread_raw(&resolved.path)?;
     let markdown = render::render_markdown(uri, &resolved.path, &raw)?;
     Ok(strip_frontmatter(markdown))
 }
 
-pub fn render_thread_head_markdown(uri: &ThreadUri, roots: &ProviderRoots) -> Result<String> {
+pub fn render_thread_head_markdown(uri: &AgentsUri, roots: &ProviderRoots) -> Result<String> {
     let mut output = String::new();
     output.push_str("---\n");
     push_yaml_string(&mut output, "uri", &uri.as_agents_string());
@@ -583,7 +582,7 @@ pub fn render_thread_head_markdown(uri: &ThreadUri, roots: &ProviderRoots) -> Re
 }
 
 pub fn resolve_subagent_view(
-    uri: &ThreadUri,
+    uri: &AgentsUri,
     roots: &ProviderRoots,
     list: bool,
 ) -> Result<SubagentView> {
@@ -729,7 +728,7 @@ pub fn render_subagent_view_markdown(view: &SubagentView) -> String {
 }
 
 pub fn resolve_pi_entry_list_view(
-    uri: &ThreadUri,
+    uri: &AgentsUri,
     roots: &ProviderRoots,
 ) -> Result<PiEntryListView> {
     if uri.provider != ProviderKind::Pi {
@@ -871,7 +870,7 @@ pub fn render_pi_entry_list_markdown(view: &PiEntryListView) -> String {
 }
 
 fn resolve_pi_subagent_view(
-    uri: &ThreadUri,
+    uri: &AgentsUri,
     roots: &ProviderRoots,
     list: bool,
 ) -> Result<SubagentView> {
@@ -1357,7 +1356,7 @@ fn collect_uuid_strings(value: &Value, ids: &mut Vec<String>) {
 }
 
 fn resolve_amp_subagent_view(
-    uri: &ThreadUri,
+    uri: &AgentsUri,
     roots: &ProviderRoots,
     list: bool,
 ) -> Result<SubagentView> {
@@ -1391,7 +1390,7 @@ fn resolve_amp_subagent_view(
 }
 
 fn build_amp_list_view(
-    uri: &ThreadUri,
+    uri: &AgentsUri,
     roots: &ProviderRoots,
     handoffs: &[AmpHandoff],
     mut warnings: Vec<String>,
@@ -1480,7 +1479,7 @@ fn build_amp_list_view(
 }
 
 fn build_amp_detail_view(
-    uri: &ThreadUri,
+    uri: &AgentsUri,
     roots: &ProviderRoots,
     agent_id: &str,
     handoffs: &[AmpHandoff],
@@ -1761,7 +1760,7 @@ fn extract_amp_handoffs(
 }
 
 fn normalize_amp_thread_id(thread_id: &str) -> Option<String> {
-    ThreadUri::parse(&format!("amp://{thread_id}"))
+    AgentsUri::parse(&format!("amp://{thread_id}"))
         .ok()
         .map(|uri| uri.session_id)
 }
@@ -1836,7 +1835,7 @@ fn push_unique(values: &mut Vec<String>, value: String) {
 }
 
 fn resolve_codex_subagent_view(
-    uri: &ThreadUri,
+    uri: &AgentsUri,
     roots: &ProviderRoots,
     list: bool,
 ) -> Result<SubagentView> {
@@ -1865,7 +1864,7 @@ fn resolve_codex_subagent_view(
 }
 
 fn build_codex_list_view(
-    uri: &ThreadUri,
+    uri: &AgentsUri,
     roots: &ProviderRoots,
     timelines: &BTreeMap<String, AgentTimeline>,
     warnings: Vec<String>,
@@ -1916,7 +1915,7 @@ fn build_codex_list_view(
 }
 
 fn build_codex_detail_view(
-    uri: &ThreadUri,
+    uri: &AgentsUri,
     roots: &ProviderRoots,
     agent_id: &str,
     timelines: &BTreeMap<String, AgentTimeline>,
@@ -2360,7 +2359,7 @@ fn extract_codex_parent_thread_id(raw: &str) -> Option<String> {
 }
 
 fn resolve_claude_subagent_view(
-    uri: &ThreadUri,
+    uri: &AgentsUri,
     roots: &ProviderRoots,
     list: bool,
 ) -> Result<SubagentView> {
@@ -2445,7 +2444,7 @@ fn resolve_claude_subagent_view(
 }
 
 fn resolve_gemini_subagent_view(
-    uri: &ThreadUri,
+    uri: &AgentsUri,
     roots: &ProviderRoots,
     list: bool,
 ) -> Result<SubagentView> {
@@ -3119,7 +3118,7 @@ fn extract_child_excerpt(
 }
 
 fn resolve_opencode_subagent_view(
-    uri: &ThreadUri,
+    uri: &AgentsUri,
     roots: &ProviderRoots,
     list: bool,
 ) -> Result<SubagentView> {
@@ -3702,7 +3701,6 @@ fn extract_last_timestamp(raw: &str) -> Option<String> {
 
     None
 }
-
 fn collect_amp_query_candidates(
     roots: &ProviderRoots,
     warnings: &mut Vec<String>,
@@ -3958,7 +3956,7 @@ fn collect_opencode_query_candidates(
             path: db_path.clone(),
             source,
         })?;
-        if ThreadUri::parse(&format!("opencode://{session_id}")).is_err() {
+        if AgentsUri::parse(&format!("opencode://{session_id}")).is_err() {
             warnings.push(format!(
                 "skipped opencode session with invalid id={session_id} from {}",
                 db_path.display()
@@ -4191,15 +4189,16 @@ fn extract_pi_session_id_from_header(path: &Path) -> std::result::Result<Option<
     Ok(Some(session_id.to_ascii_lowercase()))
 }
 
-fn main_thread_uri(uri: &ThreadUri) -> ThreadUri {
-    ThreadUri {
+fn main_thread_uri(uri: &AgentsUri) -> AgentsUri {
+    AgentsUri {
         provider: uri.provider,
         session_id: uri.session_id.clone(),
         agent_id: None,
+        query: Vec::new(),
     }
 }
 
-fn make_query(uri: &ThreadUri, agent_id: Option<String>, list: bool) -> SubagentQuery {
+fn make_query(uri: &AgentsUri, agent_id: Option<String>, list: bool) -> SubagentQuery {
     SubagentQuery {
         provider: uri.provider.to_string(),
         main_thread_id: uri.session_id.clone(),

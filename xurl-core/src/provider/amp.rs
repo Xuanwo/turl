@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 use crate::error::{Result, XurlError};
 use crate::jsonl;
 use crate::model::{ProviderKind, ResolutionMeta, ResolvedThread, WriteRequest, WriteResult};
-use crate::provider::{Provider, WriteEventSink};
+use crate::provider::{Provider, WriteEventSink, append_passthrough_args};
 use serde_json::Value;
 
 #[derive(Debug, Clone)]
@@ -27,24 +27,27 @@ impl AmpProvider {
         std::env::var("XURL_AMP_BIN").unwrap_or_else(|_| "amp".to_string())
     }
 
-    fn spawn_amp_command(args: &[&str]) -> Result<std::process::Child> {
+    fn spawn_amp_command(args: &[String], workdir: Option<&Path>) -> Result<std::process::Child> {
         let bin = Self::amp_bin();
-        Command::new(&bin)
+        let mut command = Command::new(&bin);
+        command
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|source| {
-                if source.kind() == std::io::ErrorKind::NotFound {
-                    XurlError::CommandNotFound { command: bin }
-                } else {
-                    XurlError::Io {
-                        path: PathBuf::from(bin),
-                        source,
-                    }
+            .stderr(Stdio::piped());
+        if let Some(workdir) = workdir {
+            command.current_dir(workdir);
+        }
+        command.spawn().map_err(|source| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                XurlError::CommandNotFound { command: bin }
+            } else {
+                XurlError::Io {
+                    path: PathBuf::from(bin),
+                    source,
                 }
-            })
+            }
+        })
     }
 
     fn extract_assistant_text(value: &Value) -> Option<String> {
@@ -66,11 +69,12 @@ impl AmpProvider {
 
     fn run_write(
         &self,
-        args: &[&str],
+        args: &[String],
         req: &WriteRequest,
         sink: &mut dyn WriteEventSink,
+        warnings: Vec<String>,
     ) -> Result<WriteResult> {
-        let mut child = Self::spawn_amp_command(args)?;
+        let mut child = Self::spawn_amp_command(args, req.options.workdir.as_deref())?;
         let stdout = child.stdout.take().ok_or_else(|| {
             XurlError::WriteProtocol("amp stdout pipe is unavailable".to_string())
         })?;
@@ -180,6 +184,7 @@ impl AmpProvider {
             provider: ProviderKind::Amp,
             session_id,
             final_text,
+            warnings,
         })
     }
 }
@@ -214,22 +219,42 @@ impl Provider for AmpProvider {
     }
 
     fn write(&self, req: &WriteRequest, sink: &mut dyn WriteEventSink) -> Result<WriteResult> {
+        let mut warnings = Vec::new();
+        let mut args = Vec::new();
         if let Some(session_id) = req.session_id.as_deref() {
-            self.run_write(
-                &[
-                    "threads",
-                    "continue",
-                    session_id,
-                    "-x",
-                    req.prompt.as_str(),
-                    "--stream-json",
-                ],
-                req,
-                sink,
-            )
+            args.push("threads".to_string());
+            args.push("continue".to_string());
+            args.push(session_id.to_string());
+            args.push("-x".to_string());
+            args.push(req.prompt.clone());
+            args.push("--stream-json".to_string());
         } else {
-            self.run_write(&["-x", req.prompt.as_str(), "--stream-json"], req, sink)
+            args.push("-x".to_string());
+            args.push(req.prompt.clone());
+            args.push("--stream-json".to_string());
         }
+        if !req.options.add_dirs.is_empty() {
+            warnings.push(
+                "ignored query parameter `add_dir`: Amp CLI has no compatible option".to_string(),
+            );
+        }
+        append_passthrough_args(
+            &mut args,
+            &req.options.passthrough,
+            &[
+                "workdir",
+                "add_dir",
+                "stream-json",
+                "stream-json-input",
+                "stream-json-thinking",
+                "execute",
+                "x",
+                "session",
+                "resume",
+            ],
+            &mut warnings,
+        );
+        self.run_write(&args, req, sink, warnings)
     }
 }
 

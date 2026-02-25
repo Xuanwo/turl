@@ -10,7 +10,7 @@ pub use error::{Result, XurlError};
 pub use model::{
     MessageRole, PiEntryListView, ProviderKind, ResolutionMeta, ResolvedThread, SubagentDetailView,
     SubagentListView, SubagentView, ThreadMessage, ThreadQuery, ThreadQueryItem, ThreadQueryResult,
-    WriteRequest, WriteResult,
+    WriteOptions, WriteRequest, WriteResult,
 };
 pub use provider::{ProviderRoots, WriteEventSink};
 pub use service::{
@@ -18,4 +18,4 @@ pub use service::{
     render_thread_markdown, render_thread_query_head_markdown, render_thread_query_markdown,
     resolve_subagent_view, resolve_thread, write_thread,
 };
-pub use uri::ThreadUri;
+pub use uri::AgentsUri;

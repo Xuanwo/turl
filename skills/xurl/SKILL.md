@@ -122,6 +122,12 @@ Append:
 xurl agents://codex/<conversation_id> -d "Continue"
 ```
 
+Create with query parameters:
+
+```bash
+xurl "agents://codex?workdir=%2FUsers%2Falice%2Frepo&add_dir=%2FUsers%2Falice%2Fshared&model=gpt-5" -d "Review this patch"
+```
+
 Payload from file/stdin:
 
 ```bash
@@ -129,55 +135,54 @@ xurl agents://codex -d @prompt.txt
 cat prompt.md | xurl agents://claude -d @-
 ```
 
-## Command Rules
+## Command Reference
 
 - Base form: `xurl [OPTIONS] <URI>`
 - `-I, --head`: frontmatter/discovery only
 - `-d, --data`: write payload, repeatable
+  - text: `-d "hello"`
+  - file: `-d @prompt.txt`
+  - stdin: `-d @-`
 - `-o, --output`: write command output to file
-
-Collection query rules:
-
-- `agents://<provider>` in read mode returns latest threads.
-- `q` and `limit` query params are supported in read mode.
-- `q` is keyword search only; semantic interpretation stays in caller agent.
-
-Write mode rules:
-
-- `agents://<provider> -d ...` => create
-- `agents://<provider>/<conversation_id> -d ...` => append
-- child URI write is rejected
 - `--head` and `--data` cannot be combined
 - multiple `-d` values are newline-joined
 
-Write output:
+## URI Reference
 
-- assistant text: `stdout` (or `--output` file)
-- canonical URI: `stderr` as `created: ...` / `updated: ...`
+URI Anatomy (ASCII):
 
-## URI Formats
+```text
+agents://<provider>[/<conversation_id>[/<child_id>]][?<query>]
+|------|  |--------|  |---------------------------|  |------|
+ scheme    provider         optional path parts        query
+```
 
-Canonical:
+Component meanings:
 
-- `agents://<provider>?q=<keyword>&limit=<n>`
-- `agents://<provider>/<conversation_id>`
-- `agents://<provider>/<conversation_id>/<child_id>`
+- `scheme`: fixed as `agents`
+- `provider`: provider name
+- `conversation_id`: main conversation id
+- `child_id`: child/subagent id
+- `query`: optional key-value parameters
 
-Child drill-down URI forms:
+Common URI patterns:
 
-- `agents://<provider>/<main_conversation_id>/<child_id>`
+- `agents://<provider>`: discover recent conversations
+- `agents://<provider>/<conversation_id>`: read main conversation
+- `agents://<provider>/<conversation_id>/<child_id>`: read child/subagent conversation
+- `agents://<provider>?k=v` with `-d`: create
+- `agents://<provider>/<conversation_id>` with `-d`: append
 
-Legacy compatibility:
+Query parameters:
 
-- `<provider>://<conversation_id>`
-- `<provider>://<conversation_id>/<child_id>`
-
-Pi child forms:
-
-- `agents://pi/<session_id>/<child_id>`: `<child_id>` can be a UUID child session id or an entry id
+- `q=<keyword>`: filter discovery results by keyword. Use when searching conversations by topic.
+- `limit=<n>`: cap discovery results (default `10`). Use when you want fewer or more results.
+- `workdir=<dir>`: set initial working directory for create mode. Use when new work must start in a specific repo.
+- `add_dir=<dir>`: add extra directories for create mode (repeatable). Use when new work needs multiple directories.
+- `<key>=<value>`: pass custom provider option in create mode. Use when standard keys are not enough.
 
 ## Failure Handling
 
 ### `command not found: <agent>`
 
-search web to install the `<agent>` `CLI, ask users to authenticate the agent
+Install the provider CLI, then complete provider authentication before retrying.

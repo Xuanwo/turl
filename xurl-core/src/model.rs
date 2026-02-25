@@ -45,6 +45,7 @@ pub struct ResolvedThread {
 pub struct WriteRequest {
     pub prompt: String,
     pub session_id: Option<String>,
+    pub options: WriteOptions,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +53,14 @@ pub struct WriteResult {
     pub provider: ProviderKind,
     pub session_id: String,
     pub final_text: Option<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WriteOptions {
+    pub workdir: Option<PathBuf>,
+    pub add_dirs: Vec<PathBuf>,
+    pub passthrough: Vec<(String, Option<String>)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

@@ -26,6 +26,18 @@ npx skills add Xuanwo/xurl
 Please summarize this thread: agents://codex/xxx_thread
 ```
 
+
+## Providers
+
+| Provider | Query | Create |
+| --- | --- | --- |
+| <img src="https://ampcode.com/amp-mark-color.svg" alt="Amp logo" width="16" height="16" /> Amp | Yes | Yes |
+| <img src="https://avatars.githubusercontent.com/u/14957082?s=24&v=4" alt="Codex logo" width="16" height="16" /> Codex | Yes | Yes |
+| <img src="https://www.anthropic.com/favicon.ico" alt="Claude logo" width="16" height="16" /> Claude | Yes | Yes |
+| <img src="https://www.google.com/favicon.ico" alt="Gemini logo" width="16" height="16" /> Gemini | Yes | Yes |
+| <img src=".github/assets/pi-logo-dark.svg" alt="Pi logo" width="16" height="16" /> Pi | Yes | Yes |
+| <img src="https://opencode.ai/favicon.ico" alt="OpenCode logo" width="16" height="16" /> OpenCode | Yes | Yes |
+
 ## Usage
 
 Read an agent conversation:
@@ -54,7 +66,6 @@ Drill down into a discovered child target:
 xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592/019c87fb-38b9-7843-92b1-832f02598495
 ```
 
-OpenCode child linkage is validated via sqlite `session.parent_id`.
 Start a new agent conversation:
 
 ```bash
@@ -65,6 +76,12 @@ Continue an existing conversation:
 
 ```bash
 xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592 -d "Continue"
+```
+
+Create with query parameters:
+
+```bash
+xurl "agents://codex?workdir=%2FUsers%2Falice%2Frepo&add_dir=%2FUsers%2Falice%2Fshared&model=gpt-5" -d "Review this patch"
 ```
 
 Save output:
@@ -79,44 +96,40 @@ xurl -o /tmp/conversation.md agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592
 xurl [OPTIONS] <URI>
 ```
 
-Options:
-
 - `-I, --head`: output frontmatter/discovery info only.
 - `-d, --data <DATA>`: write payload (repeatable).
+  - text: `-d "hello"`
+  - file: `-d @prompt.txt`
+  - stdin: `-d @-`
 - `-o, --output <PATH>`: write command output to file.
 
-Collection query parameters (for `agents://<provider>` read mode):
-
-- `q=<keyword>`: keyword search in provider thread data.
-- `limit=<n>`: result count, default is `10`.
-
-`--data` supports:
-
-- text: `-d "hello"`
-- file: `-d @prompt.txt`
-- stdin: `-d @-`
-
-## Providers
-
-| Provider | Query | Create |
-| --- | --- | --- |
-| <img src="https://ampcode.com/amp-mark-color.svg" alt="Amp logo" width="16" height="16" /> Amp | Yes | Yes |
-| <img src="https://avatars.githubusercontent.com/u/14957082?s=24&v=4" alt="Codex logo" width="16" height="16" /> Codex | Yes | Yes |
-| <img src="https://www.anthropic.com/favicon.ico" alt="Claude logo" width="16" height="16" /> Claude | Yes | Yes |
-| <img src="https://www.google.com/favicon.ico" alt="Gemini logo" width="16" height="16" /> Gemini | Yes | Yes |
-| <img src=".github/assets/pi-logo-dark.svg" alt="Pi logo" width="16" height="16" /> Pi | Yes | Yes |
-| <img src="https://opencode.ai/favicon.ico" alt="OpenCode logo" width="16" height="16" /> OpenCode | Yes | Yes |
-
-## URI Formats
+## URI Reference
 
 ```text
-agents://<provider>[?q=<keyword>&limit=<n>]
-agents://<provider>/<conversation_target>
+agents://<provider>[/<conversation_id>[/<child_id>]][?<query>]
+|------|  |--------|  |---------------------------|  |------|
+ scheme    provider         optional path parts        query
 ```
 
-For examples:
+- `scheme`: fixed as `agents`.
+- `provider`: target provider name, such as `codex`, `claude`, `gemini`, `amp`, `pi`, `opencode`.
+- `conversation_id`: main conversation identifier.
+- `child_id`: child/subagent identifier under a main conversation.
+- `query`: optional key-value parameters, interpreted by context.
+
+
+### Query
+
+- `q=<keyword>`: filters discovery results by keyword. Use when you want to find conversations by topic.
+- `limit=<n>`: limits discovery result count (default `10`). Use when you need a shorter or longer result list.
+- `workdir=<dir>`: sets the initial working directory for create mode. Use when a new conversation should run in a specific project root.
+- `add_dir=<dir>`: adds additional directories for create mode (repeatable). Use when a new conversation needs access to multiple directories.
+- `<key>=<value>`: passes a custom provider option in create mode. Use when you need provider-specific behavior not covered by standard keys.
+
+Examples:
 
 ```text
 agents://codex?q=spawn_agent&limit=10
 agents://codex/threads/<conversation_id>
+agents://codex?workdir=%2FUsers%2Falice%2Frepo
 ```
