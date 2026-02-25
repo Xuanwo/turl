@@ -58,6 +58,18 @@ Continue an existing conversation:
 xurl agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592 -d "Continue"
 ```
 
+Create with query parameters:
+
+```bash
+xurl "agents://codex?workdir=%2FUsers%2Falice%2Frepo&add_dir=%2FUsers%2Falice%2Fshared&model=gpt-5" -d "Review this patch"
+```
+
+Append with query parameters:
+
+```bash
+xurl "agents://codex/019c871c-b1f9-7f60-9c4f-87ed09f13592?workdir=%2FUsers%2Falice%2Frepo&flag" -d "Continue"
+```
+
 Save output:
 
 ```bash
@@ -82,6 +94,40 @@ Options:
 - file: `-d @prompt.txt`
 - stdin: `-d @-`
 
+Write mode URI rules:
+
+- `agents://<provider>` with `-d` creates a conversation.
+- `agents://<provider>/<conversation_id>` with `-d` appends to a conversation.
+- `agents://<provider>/<conversation_id>/<child_id>` is rejected in write mode.
+- `-I/--head` cannot be combined with `-d/--data`.
+
+## Write Query Parameters
+
+All write parameters are flat URI query keys.
+
+Standard keys:
+
+- `workdir=<dir>`: working directory for the agent command. Repeated values use last-wins.
+- `add_dir=<dir>`: additional directory. Repeat the key to pass multiple directories.
+
+Provider behavior:
+
+- `workdir` is always applied. Codex also gets `--cd`, OpenCode also gets `--dir`, and all providers use process `cwd`.
+- `add_dir` is mapped for Codex (`--add-dir`), Claude (`--add-dir`), and Gemini (`--include-directories`).
+- `add_dir` is ignored with warning for Amp, Pi, and OpenCode.
+
+Unknown keys:
+
+- `k=v` is passed through as `--k v`.
+- `k` or `k=` is passed through as `--k`.
+- repeated keys preserve URI order.
+
+Ignore and warning rules:
+
+- Reserved keys that would conflict with xurl-managed flags are ignored with `warning:` on stderr.
+- Empty `workdir` is rejected as an error.
+- Empty `add_dir` is ignored with warning.
+
 ## Providers
 
 | Provider | Query | Create |
@@ -95,12 +141,17 @@ Options:
 
 ## URI Formats
 
-```text
-agents://<provider>/<conversation_target>
-```
+Canonical read forms:
 
-For examples:
+- `agents://<provider>/<conversation_id>`
+- `agents://<provider>/<conversation_id>/<child_id>`
 
-```text
-agents://codex/threads/<conversation_id>
-```
+Canonical write forms:
+
+- `agents://<provider>?k=v` (create)
+- `agents://<provider>/<conversation_id>?k=v` (append)
+
+Legacy read compatibility:
+
+- `<provider>://<conversation_id>`
+- `<provider>://<conversation_id>/<child_id>`

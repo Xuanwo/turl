@@ -588,6 +588,19 @@ fn path_with_mock(mock_root: &std::path::Path) -> String {
     format!("{}:{current}", mock_root.display())
 }
 
+fn encode_query_component(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            encoded.push_str(&format!("{byte:02X}"));
+        }
+    }
+    encoded
+}
+
 #[test]
 fn default_outputs_markdown() {
     let temp = setup_codex_tree();
@@ -1461,6 +1474,247 @@ exit 7
         .stdout(predicate::str::contains("hello from append"))
         .stderr(predicate::str::contains(
             "updated: agents://codex/22222222-2222-4222-8222-222222222222",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_create_supports_query_options_passthrough_and_reserved_ignores() {
+    let temp = tempdir().expect("tempdir");
+    let workdir_raw = temp.path().join("workdir");
+    let add_dir_a_raw = temp.path().join("add-a");
+    let add_dir_b_raw = temp.path().join("add-b");
+    fs::create_dir_all(&workdir_raw).expect("mkdir");
+    fs::create_dir_all(&add_dir_a_raw).expect("mkdir");
+    fs::create_dir_all(&add_dir_b_raw).expect("mkdir");
+    let workdir = fs::canonicalize(&workdir_raw).expect("canonicalize");
+    let add_dir_a = fs::canonicalize(&add_dir_a_raw).expect("canonicalize");
+    let add_dir_b = fs::canonicalize(&add_dir_b_raw).expect("canonicalize");
+
+    let workdir_text = workdir.display().to_string();
+    let add_dir_a_text = add_dir_a.display().to_string();
+    let add_dir_b_text = add_dir_b.display().to_string();
+    let script = format!(
+        r#"
+if [ "$1" != "exec" ] || [ "$2" != "--json" ]; then
+  echo "unexpected args: $*" >&2
+  exit 7
+fi
+if [ "$(pwd)" != "{workdir_text}" ]; then
+  echo "unexpected cwd: $(pwd)" >&2
+  exit 8
+fi
+found_cd=0
+found_model=0
+found_flag=0
+count_add_dir=0
+count_json=0
+prompt_seen=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --cd)
+      shift
+      [ "$1" = "{workdir_text}" ] || exit 9
+      found_cd=1
+      ;;
+    --add-dir)
+      shift
+      if [ "$1" = "{add_dir_a_text}" ] || [ "$1" = "{add_dir_b_text}" ]; then
+        count_add_dir=$((count_add_dir + 1))
+      else
+        echo "unexpected add dir: $1" >&2
+        exit 10
+      fi
+      ;;
+    --model)
+      shift
+      [ "$1" = "gpt-5" ] || exit 11
+      found_model=1
+      ;;
+    --flag)
+      found_flag=1
+      ;;
+    --json)
+      count_json=$((count_json + 1))
+      ;;
+    hello)
+      prompt_seen=1
+      ;;
+  esac
+  shift
+done
+if [ "$found_cd" -ne 1 ] || [ "$count_add_dir" -ne 2 ] || [ "$found_model" -ne 1 ] || [ "$found_flag" -ne 1 ] || [ "$count_json" -ne 1 ] || [ "$prompt_seen" -ne 1 ]; then
+  echo "missing expected flags" >&2
+  exit 12
+fi
+echo '{{"type":"thread.started","thread_id":"66666666-6666-4666-8666-666666666666"}}'
+echo '{{"type":"item.completed","item":{{"id":"item_1","type":"agent_message","text":"query options ok"}}}}'
+"#,
+    );
+    let mock = setup_mock_bins(&[("codex", script.as_str())]);
+
+    let target = format!(
+        "agents://codex?workdir={}&add_dir={}&add_dir={}&model=gpt-5&flag&json=1",
+        encode_query_component(&workdir_text),
+        encode_query_component(&add_dir_a_text),
+        encode_query_component(&add_dir_b_text),
+    );
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg(target)
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("query options ok"))
+        .stderr(predicate::str::contains(
+            "ignored query parameter `json`: reserved by xurl for this provider",
+        ))
+        .stderr(predicate::str::contains(
+            "created: agents://codex/66666666-6666-4666-8666-666666666666",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_append_supports_query_workdir_last_wins() {
+    let temp = tempdir().expect("tempdir");
+    let first_workdir_raw = temp.path().join("workdir-a");
+    let last_workdir_raw = temp.path().join("workdir-b");
+    fs::create_dir_all(&first_workdir_raw).expect("mkdir");
+    fs::create_dir_all(&last_workdir_raw).expect("mkdir");
+    let first_workdir = fs::canonicalize(&first_workdir_raw).expect("canonicalize");
+    let last_workdir = fs::canonicalize(&last_workdir_raw).expect("canonicalize");
+    let first_workdir_text = first_workdir.display().to_string();
+    let last_workdir_text = last_workdir.display().to_string();
+    let target_session = "22222222-2222-4222-8222-222222222222";
+    let script = format!(
+        r#"
+if [ "$1" != "exec" ] || [ "$2" != "resume" ] || [ "$3" != "--json" ]; then
+  echo "unexpected args: $*" >&2
+  exit 7
+fi
+if [ "$(pwd)" != "{last_workdir_text}" ]; then
+  echo "unexpected cwd: $(pwd)" >&2
+  exit 8
+fi
+seen_cd=0
+seen_flag=0
+seen_session=0
+seen_prompt=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --cd)
+      shift
+      [ "$1" = "{last_workdir_text}" ] || exit 9
+      seen_cd=1
+      ;;
+    --flag)
+      seen_flag=1
+      ;;
+    "{target_session}")
+      seen_session=1
+      ;;
+    continue)
+      seen_prompt=1
+      ;;
+    "{first_workdir_text}")
+      echo "unexpected first workdir value" >&2
+      exit 10
+      ;;
+  esac
+  shift
+done
+if [ "$seen_cd" -ne 1 ] || [ "$seen_flag" -ne 1 ] || [ "$seen_session" -ne 1 ] || [ "$seen_prompt" -ne 1 ]; then
+  echo "missing expected args" >&2
+  exit 11
+fi
+echo '{{"type":"thread.started","thread_id":"{target_session}"}}'
+echo '{{"type":"item.completed","item":{{"id":"item_1","type":"agent_message","text":"last wins"}}}}'
+"#,
+    );
+    let mock = setup_mock_bins(&[("codex", script.as_str())]);
+    let target = format!(
+        "agents://codex/{target_session}?workdir={}&workdir={}&flag",
+        encode_query_component(&first_workdir_text),
+        encode_query_component(&last_workdir_text),
+    );
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg(target)
+        .arg("--data")
+        .arg("continue")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("last wins"))
+        .stderr(predicate::str::contains(format!(
+            "updated: agents://codex/{target_session}",
+        )));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_amp_workdir_fallback_and_add_dir_warning() {
+    let temp = tempdir().expect("tempdir");
+    let workdir_raw = temp.path().join("amp-workdir");
+    let add_dir_raw = temp.path().join("amp-add");
+    fs::create_dir_all(&workdir_raw).expect("mkdir");
+    fs::create_dir_all(&add_dir_raw).expect("mkdir");
+    let workdir = fs::canonicalize(&workdir_raw).expect("canonicalize");
+    let add_dir = fs::canonicalize(&add_dir_raw).expect("canonicalize");
+    let workdir_text = workdir.display().to_string();
+    let script = format!(
+        r#"
+if [ "$(pwd)" != "{workdir_text}" ]; then
+  echo "unexpected cwd: $(pwd)" >&2
+  exit 8
+fi
+if [ "$1" != "-x" ] || [ "$2" != "hello" ] || [ "$3" != "--stream-json" ]; then
+  echo "unexpected args: $*" >&2
+  exit 7
+fi
+seen_foo=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --foo)
+      shift
+      [ "$1" = "bar" ] || exit 9
+      seen_foo=1
+      ;;
+    --add-dir)
+      echo "add_dir must be ignored for amp" >&2
+      exit 10
+      ;;
+  esac
+  shift
+done
+[ "$seen_foo" -eq 1 ] || exit 11
+echo '{{"type":"system","subtype":"init","session_id":"T-77777777-7777-4777-8777-777777777777"}}'
+echo '{{"type":"assistant","session_id":"T-77777777-7777-4777-8777-777777777777","message":{{"content":[{{"type":"text","text":"cwd:{workdir_text}"}}]}}}}'
+echo '{{"type":"result","subtype":"success","session_id":"T-77777777-7777-4777-8777-777777777777","result":"ok"}}'
+"#,
+    );
+    let mock = setup_mock_bins(&[("amp", script.as_str())]);
+    let target = format!(
+        "agents://amp?workdir={}&add_dir={}&foo=bar",
+        encode_query_component(&workdir_text),
+        encode_query_component(&add_dir.display().to_string()),
+    );
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg(target)
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!("cwd:{workdir_text}")))
+        .stderr(predicate::str::contains(
+            "ignored query parameter `add_dir`: Amp CLI has no compatible option",
+        ))
+        .stderr(predicate::str::contains(
+            "created: agents://amp/T-77777777-7777-4777-8777-777777777777",
         ));
 }
 

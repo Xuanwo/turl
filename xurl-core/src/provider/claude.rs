@@ -12,7 +12,7 @@ use walkdir::WalkDir;
 use crate::error::{Result, XurlError};
 use crate::jsonl;
 use crate::model::{ProviderKind, ResolutionMeta, ResolvedThread, WriteRequest, WriteResult};
-use crate::provider::{Provider, WriteEventSink};
+use crate::provider::{Provider, WriteEventSink, append_passthrough_args};
 
 #[derive(Debug, Deserialize)]
 struct SessionsIndex {
@@ -179,24 +179,30 @@ impl ClaudeProvider {
         std::env::var("XURL_CLAUDE_BIN").unwrap_or_else(|_| "claude".to_string())
     }
 
-    fn spawn_claude_command(args: &[&str]) -> Result<std::process::Child> {
+    fn spawn_claude_command(
+        args: &[String],
+        workdir: Option<&Path>,
+    ) -> Result<std::process::Child> {
         let bin = Self::claude_bin();
-        Command::new(&bin)
+        let mut command = Command::new(&bin);
+        command
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|source| {
-                if source.kind() == std::io::ErrorKind::NotFound {
-                    XurlError::CommandNotFound { command: bin }
-                } else {
-                    XurlError::Io {
-                        path: PathBuf::from(bin),
-                        source,
-                    }
+            .stderr(Stdio::piped());
+        if let Some(workdir) = workdir {
+            command.current_dir(workdir);
+        }
+        command.spawn().map_err(|source| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                XurlError::CommandNotFound { command: bin }
+            } else {
+                XurlError::Io {
+                    path: PathBuf::from(bin),
+                    source,
                 }
-            })
+            }
+        })
     }
 
     fn extract_assistant_text(value: &Value) -> Option<String> {
@@ -218,11 +224,12 @@ impl ClaudeProvider {
 
     fn run_write(
         &self,
-        args: &[&str],
+        args: &[String],
         req: &WriteRequest,
         sink: &mut dyn WriteEventSink,
+        warnings: Vec<String>,
     ) -> Result<WriteResult> {
-        let mut child = Self::spawn_claude_command(args)?;
+        let mut child = Self::spawn_claude_command(args, req.options.workdir.as_deref())?;
         let stdout = child.stdout.take().ok_or_else(|| {
             XurlError::WriteProtocol("claude stdout pipe is unavailable".to_string())
         })?;
@@ -311,6 +318,7 @@ impl ClaudeProvider {
             provider: ProviderKind::Claude,
             session_id,
             final_text,
+            warnings,
         })
     }
 }
@@ -361,33 +369,41 @@ impl Provider for ClaudeProvider {
     }
 
     fn write(&self, req: &WriteRequest, sink: &mut dyn WriteEventSink) -> Result<WriteResult> {
-        let common = ["-p", "--verbose", "--output-format", "stream-json"];
+        let mut warnings = Vec::new();
+        let mut args = vec![
+            "-p".to_string(),
+            "--verbose".to_string(),
+            "--output-format".to_string(),
+            "stream-json".to_string(),
+        ];
+        for dir in &req.options.add_dirs {
+            args.push("--add-dir".to_string());
+            args.push(dir.display().to_string());
+        }
+        append_passthrough_args(
+            &mut args,
+            &req.options.passthrough,
+            &[
+                "workdir",
+                "add_dir",
+                "output-format",
+                "print",
+                "p",
+                "resume",
+                "continue",
+                "session-id",
+                "add-dir",
+            ],
+            &mut warnings,
+        );
         if let Some(session_id) = req.session_id.as_deref() {
-            self.run_write(
-                &[
-                    common[0],
-                    common[1],
-                    common[2],
-                    common[3],
-                    "--resume",
-                    session_id,
-                    req.prompt.as_str(),
-                ],
-                req,
-                sink,
-            )
+            args.push("--resume".to_string());
+            args.push(session_id.to_string());
+            args.push(req.prompt.clone());
+            self.run_write(&args, req, sink, warnings)
         } else {
-            self.run_write(
-                &[
-                    common[0],
-                    common[1],
-                    common[2],
-                    common[3],
-                    req.prompt.as_str(),
-                ],
-                req,
-                sink,
-            )
+            args.push(req.prompt.clone());
+            self.run_write(&args, req, sink, warnings)
         }
     }
 }

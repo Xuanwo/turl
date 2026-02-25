@@ -7,9 +7,9 @@ use std::io::{Read, Write};
 use clap::Parser;
 use xurl_core::uri::is_uuid_session_id;
 use xurl_core::{
-    ProviderKind, ProviderRoots, ThreadUri, WriteEventSink, WriteRequest, WriteResult, XurlError,
-    render_subagent_view_markdown, render_thread_head_markdown, render_thread_markdown,
-    resolve_subagent_view, resolve_thread, write_thread,
+    AgentsUri, ProviderKind, ProviderRoots, WriteEventSink, WriteOptions, WriteRequest,
+    WriteResult, XurlError, render_subagent_view_markdown, render_thread_head_markdown,
+    render_thread_markdown, resolve_subagent_view, resolve_thread, write_thread,
 };
 
 #[derive(Debug, Parser)]
@@ -53,7 +53,12 @@ fn run(cli: Cli) -> xurl_core::Result<()> {
     let roots = ProviderRoots::from_env_or_home()?;
     let output = output.as_deref();
     if data.is_empty() {
-        let uri = ThreadUri::parse(&uri)?;
+        let uri = AgentsUri::parse(&uri)?;
+        if uri.is_collection() {
+            return Err(XurlError::InvalidMode(
+                "read mode requires a thread URI: agents://<provider>/<session_id>".to_string(),
+            ));
+        }
         if head {
             let head = render_thread_head_markdown(&uri, &roots)?;
             return write_output(output, &head);
@@ -90,6 +95,9 @@ fn run(cli: Cli) -> xurl_core::Result<()> {
 
     let prompt = build_prompt(&data)?;
     let target = parse_write_target(&uri)?;
+    for warning in &target.warnings {
+        eprintln!("warning: {warning}");
+    }
     let mut sink = CliWriteSink::new(output, target.action)?;
     let result = write_thread(
         target.provider,
@@ -97,6 +105,7 @@ fn run(cli: Cli) -> xurl_core::Result<()> {
         &WriteRequest {
             prompt,
             session_id: target.session_id,
+            options: target.options,
         },
         &mut sink,
     )?;
@@ -128,47 +137,96 @@ struct WriteTarget {
     provider: ProviderKind,
     session_id: Option<String>,
     action: WriteAction,
+    options: WriteOptions,
+    warnings: Vec<String>,
 }
 
 fn parse_write_target(input: &str) -> xurl_core::Result<WriteTarget> {
-    if let Some(provider) = parse_collection_provider(input) {
-        return Ok(WriteTarget {
-            provider,
-            session_id: None,
-            action: WriteAction::Create,
-        });
-    }
-
-    let uri = ThreadUri::parse(input)?;
+    let uri = AgentsUri::parse(input)?;
     if uri.agent_id.is_some() {
         return Err(XurlError::InvalidMode(
             "write mode only supports main thread URIs: agents://<provider>/<session_id>"
                 .to_string(),
         ));
     }
+    let (options, warnings) = build_write_options(&uri)?;
+
+    let action = if uri.is_collection() {
+        WriteAction::Create
+    } else {
+        WriteAction::Append
+    };
+    let session_id = if uri.session_id.is_empty() {
+        None
+    } else {
+        Some(uri.session_id)
+    };
 
     Ok(WriteTarget {
         provider: uri.provider,
-        session_id: Some(uri.session_id),
-        action: WriteAction::Append,
+        session_id,
+        action,
+        options,
+        warnings,
     })
 }
 
-fn parse_collection_provider(input: &str) -> Option<ProviderKind> {
-    let target = input.strip_prefix("agents://")?;
-    if target.is_empty() || target.contains('/') {
-        return None;
+fn build_write_options(uri: &AgentsUri) -> xurl_core::Result<(WriteOptions, Vec<String>)> {
+    let mut options = WriteOptions::default();
+    let mut warnings = Vec::new();
+    let mut workdir_raw = None::<String>;
+
+    for (key, value) in &uri.query {
+        match key.as_str() {
+            "workdir" => match value.as_deref() {
+                Some(raw) if !raw.is_empty() => {
+                    workdir_raw = Some(raw.to_string());
+                }
+                _ => {
+                    return Err(XurlError::InvalidMode(
+                        "query parameter `workdir` requires a non-empty value".to_string(),
+                    ));
+                }
+            },
+            "add_dir" => match value.as_deref() {
+                Some(raw) if !raw.is_empty() => options.add_dirs.push(normalize_directory(raw)?),
+                _ => warnings.push("ignored query parameter `add_dir`: empty value".to_string()),
+            },
+            _ => options.passthrough.push((key.clone(), value.clone())),
+        }
     }
 
-    match target {
-        "amp" => Some(ProviderKind::Amp),
-        "codex" => Some(ProviderKind::Codex),
-        "claude" => Some(ProviderKind::Claude),
-        "gemini" => Some(ProviderKind::Gemini),
-        "pi" => Some(ProviderKind::Pi),
-        "opencode" => Some(ProviderKind::Opencode),
-        _ => None,
+    if let Some(raw) = workdir_raw {
+        options.workdir = Some(normalize_directory(&raw)?);
     }
+
+    Ok((options, warnings))
+}
+
+fn normalize_directory(raw: &str) -> xurl_core::Result<PathBuf> {
+    let path = PathBuf::from(raw);
+    let absolute = if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()
+            .map_err(|source| XurlError::Io {
+                path: PathBuf::from("<cwd>"),
+                source,
+            })?
+            .join(path)
+    };
+
+    let canonical = absolute.canonicalize().map_err(|source| XurlError::Io {
+        path: absolute.clone(),
+        source,
+    })?;
+    if !canonical.is_dir() {
+        return Err(XurlError::InvalidMode(format!(
+            "directory expected, got: {}",
+            canonical.display()
+        )));
+    }
+    Ok(canonical)
 }
 
 fn build_prompt(data: &[String]) -> xurl_core::Result<String> {
@@ -282,6 +340,9 @@ impl CliWriteSink {
     }
 
     fn finish(&mut self, result: &WriteResult) -> xurl_core::Result<()> {
+        for warning in &result.warnings {
+            eprintln!("warning: {warning}");
+        }
         self.emit_uri_once(result.provider, &result.session_id);
         if !self.text_emitted
             && let Some(text) = result.final_text.as_deref()

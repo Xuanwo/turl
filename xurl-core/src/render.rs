@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::error::{Result, XurlError};
 use crate::jsonl;
 use crate::model::{MessageRole, ProviderKind, ThreadMessage};
-use crate::uri::ThreadUri;
+use crate::uri::AgentsUri;
 
 const TOOL_TYPES: &[&str] = &[
     "tool_call",
@@ -23,7 +23,7 @@ enum TimelineEntry {
     Compact { summary: Option<String> },
 }
 
-pub fn render_markdown(uri: &ThreadUri, source_path: &Path, raw_jsonl: &str) -> Result<String> {
+pub fn render_markdown(uri: &AgentsUri, source_path: &Path, raw_jsonl: &str) -> Result<String> {
     let entries = extract_timeline_entries(
         uri.provider,
         source_path,
@@ -607,13 +607,13 @@ mod tests {
 
     use crate::model::ProviderKind;
     use crate::render::{extract_messages, render_markdown};
-    use crate::uri::ThreadUri;
+    use crate::uri::AgentsUri;
 
     #[test]
     fn render_outputs_frontmatter() {
         let raw = r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}}"#;
         let uri =
-            ThreadUri::parse("codex://019c871c-b1f9-7f60-9c4f-87ed09f13592").expect("parse uri");
+            AgentsUri::parse("codex://019c871c-b1f9-7f60-9c4f-87ed09f13592").expect("parse uri");
         let output = render_markdown(&uri, Path::new("/tmp/mock"), raw).expect("render");
 
         assert!(output.starts_with("---\n"));
@@ -693,7 +693,7 @@ mod tests {
 {"type":"compaction","id":"f1b2c3d4","parentId":"e1b2c3d4","timestamp":"2026-02-23T13:00:18.000Z","summary":"compact summary","firstKeptEntryId":"b1b2c3d4","tokensBefore":128}
 {"type":"message","id":"g1b2c3d4","parentId":"f1b2c3d4","timestamp":"2026-02-23T13:00:19.000Z","message":{"role":"assistant","content":[{"type":"text","text":"branch two done"}]}}"#;
 
-        let uri = ThreadUri::parse("pi://12cb4c19-2774-4de4-a0d0-9fa32fbae29f").expect("parse uri");
+        let uri = AgentsUri::parse("pi://12cb4c19-2774-4de4-a0d0-9fa32fbae29f").expect("parse uri");
         let output = render_markdown(&uri, Path::new("/tmp/mock"), raw).expect("render");
 
         assert!(output.contains("root"));
@@ -712,7 +712,7 @@ mod tests {
 {"type":"message","id":"e1b2c3d4","parentId":"b1b2c3d4","timestamp":"2026-02-23T13:00:17.000Z","message":{"role":"user","content":[{"type":"text","text":"branch two"}]}}
 {"type":"message","id":"f1b2c3d4","parentId":"e1b2c3d4","timestamp":"2026-02-23T13:00:18.000Z","message":{"role":"assistant","content":[{"type":"text","text":"branch two done"}]}}"#;
 
-        let uri = ThreadUri::parse("pi://12cb4c19-2774-4de4-a0d0-9fa32fbae29f/d1b2c3d4")
+        let uri = AgentsUri::parse("pi://12cb4c19-2774-4de4-a0d0-9fa32fbae29f/d1b2c3d4")
             .expect("parse uri");
         let output = render_markdown(&uri, Path::new("/tmp/mock"), raw).expect("render");
 
@@ -730,7 +730,7 @@ mod tests {
 {"type":"message","id":"E1B2C3D4","parentId":"B1B2C3D4","timestamp":"2026-02-23T13:00:17.000Z","message":{"role":"user","content":[{"type":"text","text":"branch two"}]}}
 {"type":"message","id":"F1B2C3D4","parentId":"E1B2C3D4","timestamp":"2026-02-23T13:00:18.000Z","message":{"role":"assistant","content":[{"type":"text","text":"branch two done"}]}}"#;
 
-        let uri = ThreadUri::parse("pi://12cb4c19-2774-4de4-a0d0-9fa32fbae29f/d1b2c3d4")
+        let uri = AgentsUri::parse("pi://12cb4c19-2774-4de4-a0d0-9fa32fbae29f/d1b2c3d4")
             .expect("parse uri");
         let output = render_markdown(&uri, Path::new("/tmp/mock"), raw).expect("render");
 
@@ -743,7 +743,7 @@ mod tests {
         let raw = r#"{"type":"session","version":3,"id":"12cb4c19-2774-4de4-a0d0-9fa32fbae29f","timestamp":"2026-02-23T13:00:12.780Z","cwd":"/tmp/project"}
 {"type":"message","id":"a1b2c3d4","parentId":null,"timestamp":"2026-02-23T13:00:13.000Z","message":{"role":"user","content":[{"type":"text","text":"root"}]}}"#;
 
-        let uri = ThreadUri::parse("pi://12cb4c19-2774-4de4-a0d0-9fa32fbae29f/deadbeef")
+        let uri = AgentsUri::parse("pi://12cb4c19-2774-4de4-a0d0-9fa32fbae29f/deadbeef")
             .expect("parse uri");
         let err = render_markdown(&uri, Path::new("/tmp/mock"), raw).expect_err("must fail");
         assert!(format!("{err}").contains("entry not found"));
@@ -756,7 +756,7 @@ mod tests {
 {"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"world"}]}}"#;
 
         let uri =
-            ThreadUri::parse("codex://019c871c-b1f9-7f60-9c4f-87ed09f13592").expect("parse uri");
+            AgentsUri::parse("codex://019c871c-b1f9-7f60-9c4f-87ed09f13592").expect("parse uri");
         let output = render_markdown(&uri, Path::new("/tmp/mock"), raw).expect("render");
 
         assert!(output.contains("## 1. User"));
@@ -771,7 +771,7 @@ mod tests {
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"New answer"}]}}"#;
 
         let uri =
-            ThreadUri::parse("claude://2823d1df-720a-4c31-ac55-ae8ba726721f").expect("parse uri");
+            AgentsUri::parse("claude://2823d1df-720a-4c31-ac55-ae8ba726721f").expect("parse uri");
         let output = render_markdown(&uri, Path::new("/tmp/mock"), raw).expect("render");
 
         assert!(output.contains("## 1. Context Compacted"));

@@ -10,7 +10,7 @@ use walkdir::WalkDir;
 
 use crate::error::{Result, XurlError};
 use crate::model::{ProviderKind, ResolutionMeta, ResolvedThread, WriteRequest, WriteResult};
-use crate::provider::{Provider, WriteEventSink};
+use crate::provider::{Provider, WriteEventSink, append_passthrough_args};
 
 #[derive(Debug, Clone)]
 pub struct GeminiProvider {
@@ -95,33 +95,40 @@ impl GeminiProvider {
         std::env::var("XURL_GEMINI_BIN").unwrap_or_else(|_| "gemini".to_string())
     }
 
-    fn spawn_gemini_command(args: &[&str]) -> Result<std::process::Child> {
+    fn spawn_gemini_command(
+        args: &[String],
+        workdir: Option<&Path>,
+    ) -> Result<std::process::Child> {
         let bin = Self::gemini_bin();
-        Command::new(&bin)
+        let mut command = Command::new(&bin);
+        command
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|source| {
-                if source.kind() == std::io::ErrorKind::NotFound {
-                    XurlError::CommandNotFound { command: bin }
-                } else {
-                    XurlError::Io {
-                        path: PathBuf::from(bin),
-                        source,
-                    }
+            .stderr(Stdio::piped());
+        if let Some(workdir) = workdir {
+            command.current_dir(workdir);
+        }
+        command.spawn().map_err(|source| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                XurlError::CommandNotFound { command: bin }
+            } else {
+                XurlError::Io {
+                    path: PathBuf::from(bin),
+                    source,
                 }
-            })
+            }
+        })
     }
 
     fn run_write(
         &self,
-        args: &[&str],
+        args: &[String],
         req: &WriteRequest,
         sink: &mut dyn WriteEventSink,
+        warnings: Vec<String>,
     ) -> Result<WriteResult> {
-        let mut child = Self::spawn_gemini_command(args)?;
+        let mut child = Self::spawn_gemini_command(args, req.options.workdir.as_deref())?;
         let stdout = child.stdout.take().ok_or_else(|| {
             XurlError::WriteProtocol("gemini stdout pipe is unavailable".to_string())
         })?;
@@ -235,6 +242,7 @@ impl GeminiProvider {
             provider: ProviderKind::Gemini,
             session_id,
             final_text,
+            warnings,
         })
     }
 }
@@ -278,25 +286,37 @@ impl Provider for GeminiProvider {
     }
 
     fn write(&self, req: &WriteRequest, sink: &mut dyn WriteEventSink) -> Result<WriteResult> {
+        let mut warnings = Vec::new();
+        let mut args = vec![
+            "-p".to_string(),
+            req.prompt.clone(),
+            "--output-format".to_string(),
+            "stream-json".to_string(),
+        ];
+        for dir in &req.options.add_dirs {
+            args.push("--include-directories".to_string());
+            args.push(dir.display().to_string());
+        }
+        append_passthrough_args(
+            &mut args,
+            &req.options.passthrough,
+            &[
+                "workdir",
+                "add_dir",
+                "output-format",
+                "prompt",
+                "p",
+                "resume",
+                "include-directories",
+            ],
+            &mut warnings,
+        );
         if let Some(session_id) = req.session_id.as_deref() {
-            self.run_write(
-                &[
-                    "-p",
-                    req.prompt.as_str(),
-                    "--output-format",
-                    "stream-json",
-                    "--resume",
-                    session_id,
-                ],
-                req,
-                sink,
-            )
+            args.push("--resume".to_string());
+            args.push(session_id.to_string());
+            self.run_write(&args, req, sink, warnings)
         } else {
-            self.run_write(
-                &["-p", req.prompt.as_str(), "--output-format", "stream-json"],
-                req,
-                sink,
-            )
+            self.run_write(&args, req, sink, warnings)
         }
     }
 }

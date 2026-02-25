@@ -106,6 +106,18 @@ Append:
 xurl agents://codex/<conversation_id> -d "Continue"
 ```
 
+Create with query parameters:
+
+```bash
+xurl "agents://codex?workdir=%2FUsers%2Falice%2Frepo&add_dir=%2FUsers%2Falice%2Fshared&model=gpt-5" -d "Review this patch"
+```
+
+Append with query parameters:
+
+```bash
+xurl "agents://codex/<conversation_id>?workdir=%2FUsers%2Falice%2Frepo&flag" -d "Continue"
+```
+
 Payload from file/stdin:
 
 ```bash
@@ -127,11 +139,27 @@ Write mode rules:
 - child URI write is rejected
 - `--head` and `--data` cannot be combined
 - multiple `-d` values are newline-joined
+- all write parameters come from URI query keys
 
 Write output:
 
 - assistant text: `stdout` (or `--output` file)
 - canonical URI: `stderr` as `created: ...` / `updated: ...`
+
+Write query keys:
+
+- standard: `workdir`, `add_dir` (repeatable)
+- unknown keys are passthrough (`k=v` -> `--k v`, `k` -> `--k`)
+- repeated keys preserve URI order
+- reserved conflicting keys are ignored with `warning:` on stderr
+- `workdir` must be non-empty and directory-valid
+- empty `add_dir` is ignored with warning
+
+Provider mapping:
+
+- `workdir`: always effective by process `cwd`; Codex also gets `--cd`, OpenCode also gets `--dir`
+- `add_dir`: Codex `--add-dir`, Claude `--add-dir`, Gemini `--include-directories`
+- `add_dir`: ignored with warning for Amp, Pi, OpenCode
 
 ## URI Formats
 
@@ -139,6 +167,8 @@ Canonical:
 
 - `agents://<provider>/<conversation_id>`
 - `agents://<provider>/<conversation_id>/<child_id>`
+- `agents://<provider>?k=v` (write create)
+- `agents://<provider>/<conversation_id>?k=v` (write append)
 
 Child drill-down URI forms:
 
@@ -157,4 +187,4 @@ Pi child forms:
 
 ### `command not found: <agent>`
 
-search web to install the `<agent>` `CLI, ask users to authenticate the agent
+Install the provider CLI, then complete provider authentication before retrying.

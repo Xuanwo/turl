@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use crate::error::{Result, XurlError};
 use crate::model::{ProviderKind, ResolutionMeta, ResolvedThread, WriteRequest, WriteResult};
-use crate::provider::{Provider, WriteEventSink};
+use crate::provider::{Provider, WriteEventSink, append_passthrough_args};
 
 #[derive(Debug, Clone)]
 pub struct OpencodeProvider {
@@ -143,24 +143,30 @@ impl OpencodeProvider {
         std::env::var("XURL_OPENCODE_BIN").unwrap_or_else(|_| "opencode".to_string())
     }
 
-    fn spawn_opencode_command(args: &[&str]) -> Result<std::process::Child> {
+    fn spawn_opencode_command(
+        args: &[String],
+        workdir: Option<&std::path::Path>,
+    ) -> Result<std::process::Child> {
         let bin = Self::opencode_bin();
-        Command::new(&bin)
+        let mut command = Command::new(&bin);
+        command
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|source| {
-                if source.kind() == std::io::ErrorKind::NotFound {
-                    XurlError::CommandNotFound { command: bin }
-                } else {
-                    XurlError::Io {
-                        path: PathBuf::from(bin),
-                        source,
-                    }
+            .stderr(Stdio::piped());
+        if let Some(workdir) = workdir {
+            command.current_dir(workdir);
+        }
+        command.spawn().map_err(|source| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                XurlError::CommandNotFound { command: bin }
+            } else {
+                XurlError::Io {
+                    path: PathBuf::from(bin),
+                    source,
                 }
-            })
+            }
+        })
     }
 
     fn collect_text(value: Option<&Value>) -> String {
@@ -249,11 +255,12 @@ impl OpencodeProvider {
 
     fn run_write(
         &self,
-        args: &[&str],
+        args: &[String],
         req: &WriteRequest,
         sink: &mut dyn WriteEventSink,
+        warnings: Vec<String>,
     ) -> Result<WriteResult> {
-        let mut child = Self::spawn_opencode_command(args)?;
+        let mut child = Self::spawn_opencode_command(args, req.options.workdir.as_deref())?;
         let stdout = child.stdout.take().ok_or_else(|| {
             XurlError::WriteProtocol("opencode stdout pipe is unavailable".to_string())
         })?;
@@ -365,6 +372,7 @@ impl OpencodeProvider {
             provider: ProviderKind::Opencode,
             session_id,
             final_text,
+            warnings,
         })
     }
 }
@@ -444,22 +452,35 @@ impl Provider for OpencodeProvider {
     }
 
     fn write(&self, req: &WriteRequest, sink: &mut dyn WriteEventSink) -> Result<WriteResult> {
-        if let Some(session_id) = req.session_id.as_deref() {
-            self.run_write(
-                &[
-                    "run",
-                    req.prompt.as_str(),
-                    "--session",
-                    session_id,
-                    "--format",
-                    "json",
-                ],
-                req,
-                sink,
-            )
-        } else {
-            self.run_write(&["run", req.prompt.as_str(), "--format", "json"], req, sink)
+        let mut warnings = Vec::new();
+        let mut args = vec!["run".to_string(), req.prompt.clone()];
+        if let Some(workdir) = req.options.workdir.as_ref() {
+            args.push("--dir".to_string());
+            args.push(workdir.display().to_string());
         }
+        if !req.options.add_dirs.is_empty() {
+            warnings.push(
+                "ignored query parameter `add_dir`: OpenCode CLI has no compatible option"
+                    .to_string(),
+            );
+        }
+        if let Some(session_id) = req.session_id.as_deref() {
+            args.push("--session".to_string());
+            args.push(session_id.to_string());
+        } else {
+            // keep create flow without session binding
+        }
+        args.push("--format".to_string());
+        args.push("json".to_string());
+        append_passthrough_args(
+            &mut args,
+            &req.options.passthrough,
+            &[
+                "workdir", "add_dir", "format", "session", "continue", "resume", "dir",
+            ],
+            &mut warnings,
+        );
+        self.run_write(&args, req, sink, warnings)
     }
 }
 
