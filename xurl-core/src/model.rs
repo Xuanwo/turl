@@ -92,6 +92,7 @@ pub struct WriteResult {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WriteOptions {
     pub params: Vec<(String, Option<String>)>,
+    pub role: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -216,6 +217,7 @@ pub struct PiEntryListView {
 pub struct ThreadQuery {
     pub uri: String,
     pub provider: ProviderKind,
+    pub role: Option<String>,
     pub q: Option<String>,
     pub limit: usize,
     pub ignored_params: Vec<String>,

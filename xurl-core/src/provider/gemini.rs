@@ -280,6 +280,12 @@ impl Provider for GeminiProvider {
     }
 
     fn write(&self, req: &WriteRequest, sink: &mut dyn WriteEventSink) -> Result<WriteResult> {
+        if let Some(role) = req.options.role.as_deref() {
+            return Err(XurlError::InvalidMode(format!(
+                "provider `{}` does not support role-based write URI (`{role}`) in non-interactive mode",
+                ProviderKind::Gemini
+            )));
+        }
         let warnings = Vec::new();
         let mut args = vec![
             "-p".to_string(),

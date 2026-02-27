@@ -15,7 +15,20 @@ pub mod pi;
 pub mod skills;
 
 pub(crate) fn append_passthrough_args(args: &mut Vec<String>, params: &[(String, Option<String>)]) {
+    append_passthrough_args_excluding(args, params, &[]);
+}
+
+pub(crate) fn append_passthrough_args_excluding(
+    args: &mut Vec<String>,
+    params: &[(String, Option<String>)],
+    excluded_keys: &[&str],
+) -> Vec<String> {
+    let mut excluded = Vec::new();
     for (key, value) in params {
+        if excluded_keys.iter().any(|candidate| candidate == key) {
+            excluded.push(key.clone());
+            continue;
+        }
         args.push(format!("--{key}"));
         if let Some(value) = value
             && !value.is_empty()
@@ -23,6 +36,7 @@ pub(crate) fn append_passthrough_args(args: &mut Vec<String>, params: &[(String,
             args.push(value.clone());
         }
     }
+    excluded
 }
 
 pub trait WriteEventSink {

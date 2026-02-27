@@ -8,6 +8,7 @@
 
 - Read an agent conversation as markdown.
 - Query recent threads and keyword matches for a provider.
+- Query role-scoped threads with `agents://<provider>/<role>`.
 - Discover subagent/branch navigation targets.
 - Read local and GitHub-hosted skills via `skills://` URIs.
 - Start a new conversation with agents.
@@ -30,14 +31,14 @@ Please summarize this thread: agents://codex/xxx_thread
 
 ## Providers
 
-| Provider | Query | Create |
-| --- | --- | --- |
-| <img src="https://ampcode.com/amp-mark-color.svg" alt="Amp logo" width="16" height="16" /> Amp | Yes | Yes |
-| <img src="https://avatars.githubusercontent.com/u/14957082?s=24&v=4" alt="Codex logo" width="16" height="16" /> Codex | Yes | Yes |
-| <img src="https://www.anthropic.com/favicon.ico" alt="Claude logo" width="16" height="16" /> Claude | Yes | Yes |
-| <img src="https://www.google.com/favicon.ico" alt="Gemini logo" width="16" height="16" /> Gemini | Yes | Yes |
-| <img src=".github/assets/pi-logo-dark.svg" alt="Pi logo" width="16" height="16" /> Pi | Yes | Yes |
-| <img src="https://opencode.ai/favicon.ico" alt="OpenCode logo" width="16" height="16" /> OpenCode | Yes | Yes |
+| Provider | Query | Create | Role Create |
+| --- | --- | --- | --- |
+| <img src="https://ampcode.com/amp-mark-color.svg" alt="Amp logo" width="16" height="16" /> Amp | Yes | Yes | No |
+| <img src="https://avatars.githubusercontent.com/u/14957082?s=24&v=4" alt="Codex logo" width="16" height="16" /> Codex | Yes | Yes | Yes |
+| <img src="https://www.anthropic.com/favicon.ico" alt="Claude logo" width="16" height="16" /> Claude | Yes | Yes | Yes |
+| <img src="https://www.google.com/favicon.ico" alt="Gemini logo" width="16" height="16" /> Gemini | Yes | Yes | No |
+| <img src=".github/assets/pi-logo-dark.svg" alt="Pi logo" width="16" height="16" /> Pi | Yes | Yes | No |
+| <img src="https://opencode.ai/favicon.ico" alt="OpenCode logo" width="16" height="16" /> OpenCode | Yes | Yes | Yes |
 
 ## Usage
 
@@ -60,6 +61,14 @@ xurl codex
 xurl 'codex?q=spawn_agent'
 ```
 
+Query role-scoped threads:
+
+```bash
+xurl agents://codex/reviewer
+# equivalent shorthand:
+xurl codex/reviewer
+```
+
 Discover child targets:
 
 ```bash
@@ -78,6 +87,12 @@ Start a new agent conversation:
 xurl agents://codex -d "Draft a migration plan"
 # equivalent shorthand:
 xurl codex -d "Draft a migration plan"
+```
+
+Start a new conversation with role URI:
+
+```bash
+xurl agents://codex/reviewer -d "Review this patch"
 ```
 
 Continue an existing conversation:
@@ -135,7 +150,7 @@ xurl [OPTIONS] <URI>
 ### Agents URI
 
 ```text
-[agents://]<provider>[/<conversation_id>[/<child_id>]][?<query>]
+[agents://]<provider>[/<token>[/<child_id>]][?<query>]
 |------|  |--------|  |---------------------------|  |------|
  optional   provider         optional path parts        query
  scheme
@@ -143,7 +158,7 @@ xurl [OPTIONS] <URI>
 
 - `scheme`: optional `agents://` prefix. If omitted, `xurl` treats input as an `agents` URI shorthand.
 - `provider`: target provider name, such as `codex`, `claude`, `gemini`, `amp`, `pi`, `opencode`.
-- `conversation_id`: main conversation identifier.
+- `token`: main conversation identifier or role name.
 - `child_id`: child/subagent identifier under a main conversation.
 - `query`: optional key-value parameters, interpreted by context.
 
@@ -159,6 +174,7 @@ Examples:
 ```text
 agents://codex?q=spawn_agent&limit=10
 agents://codex/threads/<conversation_id>
+agents://codex/reviewer
 agents://codex?cd=%2FUsers%2Falice%2Frepo&add-dir=%2FUsers%2Falice%2Fshared
 ```
 

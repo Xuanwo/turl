@@ -53,6 +53,44 @@ fn setup_codex_tree_with_sqlite_missing_threads() -> tempfile::TempDir {
     temp
 }
 
+fn setup_codex_role_query_tree() -> tempfile::TempDir {
+    let temp = tempdir().expect("tempdir");
+    let thread_path = temp.path().join(format!(
+        "sessions/2026/02/23/rollout-2026-02-23T04-48-50-{SESSION_ID}.jsonl"
+    ));
+    fs::create_dir_all(thread_path.parent().expect("parent")).expect("mkdir");
+    fs::write(
+        &thread_path,
+        "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"run reviewer role\"}]}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"reviewer done\"}]}}\n",
+    )
+    .expect("write");
+    temp
+}
+
+fn setup_codex_role_configs(root: &Path) {
+    fs::write(
+        root.join("config.toml"),
+        r#"
+[agents.reviewer]
+description = "Find issues."
+config_file = "agents/reviewer.toml"
+model_reasoning_effort = "high"
+developer_instructions = "Focus on high priority issues."
+"#,
+    )
+    .expect("write config");
+
+    let role_dir = root.join("agents");
+    fs::create_dir_all(&role_dir).expect("mkdir");
+    fs::write(
+        role_dir.join("reviewer.toml"),
+        r#"
+model = "gpt-5.3-codex"
+"#,
+    )
+    .expect("write role config");
+}
+
 fn setup_amp_tree() -> tempfile::TempDir {
     let temp = tempdir().expect("tempdir");
     let thread_path = temp
@@ -958,6 +996,40 @@ fn shorthand_collection_query_outputs_markdown() {
 }
 
 #[test]
+fn role_query_outputs_markdown() {
+    let temp = setup_codex_role_query_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .arg("agents://codex/reviewer")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Threads"))
+        .stdout(predicate::str::contains("- Role: `reviewer`"))
+        .stdout(predicate::str::contains(format!(
+            "agents://codex/{SESSION_ID}"
+        )))
+        .stdout(predicate::str::contains("- Match:"));
+}
+
+#[test]
+fn shorthand_role_query_outputs_markdown() {
+    let temp = setup_codex_role_query_tree();
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("CODEX_HOME", temp.path())
+        .arg("codex/reviewer")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Threads"))
+        .stdout(predicate::str::contains("- Role: `reviewer`"))
+        .stdout(predicate::str::contains(format!(
+            "agents://codex/{SESSION_ID}"
+        )))
+        .stdout(predicate::str::contains("- Match:"));
+}
+
+#[test]
 fn claude_collection_query_outputs_markdown() {
     let temp = setup_claude_subagent_tree();
 
@@ -1821,6 +1893,64 @@ exit 7
 
 #[cfg(unix)]
 #[test]
+fn write_create_with_codex_role_loads_role_config() {
+    let mock = setup_mock_bins(&[(
+        "codex",
+        r#"
+if [ "$1" != "exec" ] || [ "$2" != "--json" ]; then
+  echo "unexpected args: $*" >&2
+  exit 7
+fi
+seen_model=0
+seen_effort=0
+seen_instructions=0
+seen_prompt=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --config)
+      shift
+      if [ "$1" = "model=gpt-5.3-codex" ]; then
+        seen_model=1
+      fi
+      if [ "$1" = "model_reasoning_effort=high" ]; then
+        seen_effort=1
+      fi
+      if [ "$1" = "developer_instructions=Focus on high priority issues." ]; then
+        seen_instructions=1
+      fi
+      ;;
+    hello)
+      seen_prompt=1
+      ;;
+  esac
+  shift
+done
+[ "$seen_model" -eq 1 ] || exit 8
+[ "$seen_effort" -eq 1 ] || exit 9
+[ "$seen_instructions" -eq 1 ] || exit 10
+[ "$seen_prompt" -eq 1 ] || exit 11
+echo '{"type":"thread.started","thread_id":"12345678-1111-4111-8111-111111111111"}'
+echo '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"role create ok"}}'
+"#,
+    )]);
+    setup_codex_role_configs(mock.path());
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .env("CODEX_HOME", mock.path())
+        .arg("agents://codex/reviewer")
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("role create ok"))
+        .stderr(predicate::str::contains(
+            "created: agents://codex/12345678-1111-4111-8111-111111111111",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
 fn write_append_uses_resume_and_prints_updated_uri() {
     let mock = setup_mock_bins(&[(
         "codex",
@@ -2194,6 +2324,29 @@ exit 7
 
 #[cfg(unix)]
 #[test]
+fn write_amp_role_uri_is_rejected_with_clear_error() {
+    let mock = setup_mock_bins(&[(
+        "amp",
+        r#"
+echo "should not run" >&2
+exit 99
+"#,
+    )]);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg("agents://amp/reviewer")
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "does not support role-based write URI",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
 fn write_gemini_create_tolerates_non_json_prefix() {
     let mock = setup_mock_bins(&[(
         "gemini",
@@ -2225,6 +2378,29 @@ exit 7
 
 #[cfg(unix)]
 #[test]
+fn write_gemini_role_uri_is_rejected_with_clear_error() {
+    let mock = setup_mock_bins(&[(
+        "gemini",
+        r#"
+echo "should not run" >&2
+exit 99
+"#,
+    )]);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg("agents://gemini/reviewer")
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "does not support role-based write URI",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
 fn write_pi_create_stream_json_path_works() {
     let mock = setup_mock_bins(&[(
         "pi",
@@ -2250,6 +2426,29 @@ exit 7
         .stdout(predicate::str::contains("hello from pi"))
         .stderr(predicate::str::contains(
             "created: agents://pi/aaaaaaaa-1111-4222-8333-bbbbbbbbbbbb",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_pi_role_uri_is_rejected_with_clear_error() {
+    let mock = setup_mock_bins(&[(
+        "pi",
+        r#"
+echo "should not run" >&2
+exit 99
+"#,
+    )]);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg("agents://pi/reviewer")
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "does not support role-based write URI",
         ));
 }
 
@@ -2286,6 +2485,34 @@ exit 7
 
 #[cfg(unix)]
 #[test]
+fn write_opencode_role_uri_sets_agent_flag() {
+    let mock = setup_mock_bins(&[(
+        "opencode",
+        r#"
+if [ "$1" != "run" ] || [ "$3" != "--agent" ] || [ "$4" != "reviewer" ] || [ "$5" != "--format" ] || [ "$6" != "json" ]; then
+  echo "unexpected args: $*" >&2
+  exit 7
+fi
+echo '{"type":"session.start","sessionID":"ses_43a90e3adffejRgrTdlJa48CtE"}'
+echo '{"type":"assistant.delta","delta":"role ok"}'
+"#,
+    )]);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg("agents://opencode/reviewer")
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("role ok"))
+        .stderr(predicate::str::contains(
+            "created: agents://opencode/ses_43a90e3adffejRgrTdlJa48CtE",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
 fn write_claude_create_stream_json_path_works() {
     let mock = setup_mock_bins(&[(
         "claude",
@@ -2309,6 +2536,46 @@ exit 7
         .assert()
         .success()
         .stdout(predicate::str::contains("hello from claude"))
+        .stderr(predicate::str::contains(
+            "created: agents://claude/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn write_claude_role_uri_sets_agent_flag() {
+    let mock = setup_mock_bins(&[(
+        "claude",
+        r#"
+if [ "$1" != "-p" ] || [ "$2" != "--verbose" ] || [ "$3" != "--output-format" ] || [ "$4" != "stream-json" ]; then
+  echo "unexpected args: $*" >&2
+  exit 7
+fi
+seen_agent=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --agent)
+      shift
+      [ "$1" = "reviewer" ] || exit 8
+      seen_agent=1
+      ;;
+  esac
+  shift
+done
+[ "$seen_agent" -eq 1 ] || exit 9
+echo '{"type":"system","subtype":"init","session_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}'
+echo '{"type":"assistant","session_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","message":{"content":[{"type":"text","text":"claude role ok"}]}}'
+"#,
+    )]);
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("xurl"));
+    cmd.env("PATH", path_with_mock(mock.path()))
+        .arg("agents://claude/reviewer")
+        .arg("-d")
+        .arg("hello")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("claude role ok"))
         .stderr(predicate::str::contains(
             "created: agents://claude/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         ));

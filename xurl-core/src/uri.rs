@@ -188,6 +188,23 @@ impl AgentsUri {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoleUri {
+    pub provider: ProviderKind,
+    pub role: String,
+    pub query: Vec<(String, Option<String>)>,
+}
+
+impl RoleUri {
+    pub fn parse(input: &str) -> Result<Option<Self>> {
+        parse_role_uri(input)
+    }
+
+    pub fn as_agents_string(&self) -> String {
+        format!("agents://{}/{}", self.provider, self.role)
+    }
+}
+
 type ParsedTarget<'a> = (ProviderKind, &'a str, Option<String>, bool);
 
 fn parse_agents_target<'a>(target: &'a str, input: &str) -> Result<ParsedTarget<'a>> {
@@ -427,21 +444,44 @@ fn parse_provider(scheme: &str) -> Result<ProviderKind> {
     }
 }
 
-pub fn parse_collection_query_uri(input: &str) -> Result<Option<ThreadQuery>> {
-    let target = if let Some(target) = input.strip_prefix("agents://") {
-        target
-    } else if input.contains("://") {
-        return Ok(None);
-    } else {
-        input
+fn looks_like_session_id(provider: ProviderKind, token: &str) -> bool {
+    match provider {
+        ProviderKind::Amp => AMP_SESSION_ID_RE.is_match(token),
+        ProviderKind::Codex | ProviderKind::Claude | ProviderKind::Gemini | ProviderKind::Pi => {
+            is_uuid_session_id(token)
+        }
+        ProviderKind::Opencode => OPENCODE_SESSION_ID_RE.is_match(token),
+    }
+}
+
+pub fn parse_role_uri(input: &str) -> Result<Option<RoleUri>> {
+    let (scheme, target_with_query) = input
+        .split_once("://")
+        .map_or((None, input), |(scheme, target)| (Some(scheme), target));
+    let (target, raw_query) = split_target_and_query(target_with_query);
+    let query = parse_query(raw_query, input)?;
+
+    let (provider, raw_id, raw_agent_id, _) = match scheme {
+        Some("agents") => parse_agents_target(target, input)?,
+        Some(scheme) => parse_legacy_target(scheme, target, input)?,
+        None => parse_agents_target(target, input)?,
     };
 
-    let (provider_part, query_raw) = target.split_once('?').map_or((target, ""), |parts| parts);
-    if provider_part.is_empty() || provider_part.contains('/') {
+    if raw_id.is_empty() || raw_agent_id.is_some() || looks_like_session_id(provider, raw_id) {
         return Ok(None);
     }
 
-    let provider = parse_provider(provider_part)?;
+    Ok(Some(RoleUri {
+        provider,
+        role: raw_id.to_string(),
+        query,
+    }))
+}
+
+fn parse_thread_query_pairs(
+    input: &str,
+    query_raw: &str,
+) -> Result<(Option<String>, usize, Vec<String>)> {
     let mut q = None::<String>;
     let mut limit = None::<usize>;
     let mut ignored_params = Vec::<String>::new();
@@ -471,11 +511,57 @@ pub fn parse_collection_query_uri(input: &str) -> Result<Option<ThreadQuery>> {
         }
     }
 
+    Ok((q, limit.unwrap_or(10), ignored_params))
+}
+
+pub fn parse_collection_query_uri(input: &str) -> Result<Option<ThreadQuery>> {
+    let target = if let Some(target) = input.strip_prefix("agents://") {
+        target
+    } else if input.contains("://") {
+        return Ok(None);
+    } else {
+        input
+    };
+
+    let (provider_part, query_raw) = target.split_once('?').map_or((target, ""), |parts| parts);
+    if provider_part.is_empty() || provider_part.contains('/') {
+        return Ok(None);
+    }
+
+    let provider = parse_provider(provider_part)?;
+    let (q, limit, ignored_params) = parse_thread_query_pairs(input, query_raw)?;
+
     Ok(Some(ThreadQuery {
         uri: input.to_string(),
         provider,
+        role: None,
         q,
-        limit: limit.unwrap_or(10),
+        limit,
+        ignored_params,
+    }))
+}
+
+pub fn parse_role_query_uri(input: &str) -> Result<Option<ThreadQuery>> {
+    let Some(role_uri) = parse_role_uri(input)? else {
+        return Ok(None);
+    };
+
+    let target = if let Some(target) = input.strip_prefix("agents://") {
+        target
+    } else if input.contains("://") {
+        input.split_once("://").map_or("", |(_, target)| target)
+    } else {
+        input
+    };
+    let (_, query_raw) = target.split_once('?').map_or((target, ""), |parts| parts);
+    let (q, limit, ignored_params) = parse_thread_query_pairs(input, query_raw)?;
+
+    Ok(Some(ThreadQuery {
+        uri: input.to_string(),
+        provider: role_uri.provider,
+        role: Some(role_uri.role),
+        q,
+        limit,
         ignored_params,
     }))
 }
@@ -534,7 +620,9 @@ fn hex_nibble(value: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentsUri, SkillsUri, parse_collection_query_uri};
+    use super::{
+        AgentsUri, SkillsUri, parse_collection_query_uri, parse_role_query_uri, parse_role_uri,
+    };
     use crate::model::ProviderKind;
 
     #[test]
@@ -922,6 +1010,7 @@ mod tests {
             parse_collection_query_uri("agents://codex").expect("collection query parse must work");
         let query = query.expect("query should be present");
         assert_eq!(query.provider, ProviderKind::Codex);
+        assert_eq!(query.role, None);
         assert_eq!(query.q, None);
         assert_eq!(query.limit, 10);
         assert!(query.ignored_params.is_empty());
@@ -933,6 +1022,7 @@ mod tests {
             .expect("collection query parse must work");
         let query = query.expect("query should be present");
         assert_eq!(query.provider, ProviderKind::Claude);
+        assert_eq!(query.role, None);
         assert_eq!(query.q, Some("spawn agent".to_string()));
         assert_eq!(query.limit, 7);
     }
@@ -943,6 +1033,7 @@ mod tests {
             .expect("collection query parse must work");
         let query = query.expect("query should be present");
         assert_eq!(query.provider, ProviderKind::Claude);
+        assert_eq!(query.role, None);
         assert_eq!(query.q, Some("spawn agent".to_string()));
         assert_eq!(query.limit, 7);
     }
@@ -953,6 +1044,7 @@ mod tests {
             .expect("collection query parse must work");
         let query = query.expect("query should be present");
         assert_eq!(query.provider, ProviderKind::Pi);
+        assert_eq!(query.role, None);
         assert_eq!(query.ignored_params, vec!["foo".to_string()]);
     }
 
@@ -975,6 +1067,46 @@ mod tests {
     fn parse_collection_query_uri_is_none_for_thread_uri_without_agents_prefix() {
         let query = parse_collection_query_uri("codex/019c871c-b1f9-7f60-9c4f-87ed09f13592")
             .expect("parsing must succeed");
+        assert_eq!(query, None);
+    }
+
+    #[test]
+    fn parse_role_uri_with_agents_prefix() {
+        let role_uri = parse_role_uri("agents://codex/reviewer").expect("parse must succeed");
+        let role_uri = role_uri.expect("role uri must exist");
+        assert_eq!(role_uri.provider, ProviderKind::Codex);
+        assert_eq!(role_uri.role, "reviewer");
+    }
+
+    #[test]
+    fn parse_role_uri_without_agents_prefix() {
+        let role_uri = parse_role_uri("codex/reviewer").expect("parse must succeed");
+        let role_uri = role_uri.expect("role uri must exist");
+        assert_eq!(role_uri.provider, ProviderKind::Codex);
+        assert_eq!(role_uri.role, "reviewer");
+    }
+
+    #[test]
+    fn parse_role_uri_returns_none_for_valid_session() {
+        let role_uri = parse_role_uri("codex/019c871c-b1f9-7f60-9c4f-87ed09f13592")
+            .expect("parse must succeed");
+        assert_eq!(role_uri, None);
+    }
+
+    #[test]
+    fn parse_role_query_uri_with_q_and_limit() {
+        let query = parse_role_query_uri("agents://codex/reviewer?q=spawn+agent&limit=3")
+            .expect("role query parse must succeed");
+        let query = query.expect("query must exist");
+        assert_eq!(query.provider, ProviderKind::Codex);
+        assert_eq!(query.role, Some("reviewer".to_string()));
+        assert_eq!(query.q, Some("spawn agent".to_string()));
+        assert_eq!(query.limit, 3);
+    }
+
+    #[test]
+    fn parse_role_query_uri_returns_none_for_collection() {
+        let query = parse_role_query_uri("agents://codex").expect("parse must succeed");
         assert_eq!(query, None);
     }
 }
