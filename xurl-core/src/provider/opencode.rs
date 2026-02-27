@@ -10,7 +10,9 @@ use serde_json::{Value, json};
 
 use crate::error::{Result, XurlError};
 use crate::model::{ProviderKind, ResolutionMeta, ResolvedThread, WriteRequest, WriteResult};
-use crate::provider::{Provider, WriteEventSink, append_passthrough_args};
+use crate::provider::{
+    Provider, WriteEventSink, append_passthrough_args, append_passthrough_args_excluding,
+};
 
 #[derive(Debug, Clone)]
 pub struct OpencodeProvider {
@@ -452,7 +454,7 @@ impl Provider for OpencodeProvider {
     }
 
     fn write(&self, req: &WriteRequest, sink: &mut dyn WriteEventSink) -> Result<WriteResult> {
-        let warnings = Vec::new();
+        let mut warnings = Vec::new();
         let mut args = vec!["run".to_string(), req.prompt.clone()];
         if let Some(session_id) = req.session_id.as_deref() {
             args.push("--session".to_string());
@@ -460,9 +462,23 @@ impl Provider for OpencodeProvider {
         } else {
             // keep create flow without session binding
         }
+        if let Some(role) = req.options.role.as_deref() {
+            args.push("--agent".to_string());
+            args.push(role.to_string());
+        }
         args.push("--format".to_string());
         args.push("json".to_string());
-        append_passthrough_args(&mut args, &req.options.params);
+        if req.options.role.is_some() {
+            let ignored =
+                append_passthrough_args_excluding(&mut args, &req.options.params, &["agent"]);
+            if !ignored.is_empty() {
+                warnings.push(
+                    "ignored query parameter `agent` because URI role is already set".to_string(),
+                );
+            }
+        } else {
+            append_passthrough_args(&mut args, &req.options.params);
+        }
         self.run_write(&args, req, sink, warnings)
     }
 }

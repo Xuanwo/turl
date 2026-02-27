@@ -226,7 +226,11 @@ pub fn query_threads(query: &ThreadQuery, roots: &ProviderRoots) -> Result<Threa
         ProviderKind::Opencode => collect_opencode_query_candidates(
             roots,
             &mut warnings,
-            query.q.as_deref().is_some_and(|q| !q.trim().is_empty()),
+            query.q.as_deref().is_some_and(|q| !q.trim().is_empty())
+                || query
+                    .role
+                    .as_deref()
+                    .is_some_and(|role| !role.trim().is_empty()),
         )?,
     };
 
@@ -240,21 +244,44 @@ pub fn query_threads(query: &ThreadQuery, roots: &ProviderRoots) -> Result<Threa
         });
     }
 
-    let items = if let Some(keyword) = query.q.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
-        collect_keyword_matched_items(&candidates, keyword, query.limit)?
-    } else {
-        candidates
-            .iter()
-            .take(query.limit)
-            .map(|candidate| ThreadQueryItem {
-                thread_id: candidate.thread_id.clone(),
-                uri: candidate.uri.clone(),
-                thread_source: candidate.thread_source.clone(),
-                updated_at: candidate.updated_at.clone(),
-                matched_preview: None,
-            })
-            .collect()
-    };
+    let role_filter = query
+        .role
+        .as_deref()
+        .map(str::trim)
+        .filter(|q| !q.is_empty());
+    let keyword_filter = query.q.as_deref().map(str::trim).filter(|q| !q.is_empty());
+    let mut items = Vec::new();
+    for candidate in &candidates {
+        if items.len() >= query.limit {
+            break;
+        }
+
+        let mut role_preview = None::<String>;
+        if let Some(role_filter) = role_filter {
+            role_preview = match_candidate_preview(candidate, role_filter)?;
+            if role_preview.is_none() {
+                continue;
+            }
+        }
+
+        let matched_preview = if let Some(keyword_filter) = keyword_filter {
+            let matched_preview = match_candidate_preview(candidate, keyword_filter)?;
+            if matched_preview.is_none() {
+                continue;
+            }
+            matched_preview
+        } else {
+            role_preview
+        };
+
+        items.push(ThreadQueryItem {
+            thread_id: candidate.thread_id.clone(),
+            uri: candidate.uri.clone(),
+            thread_source: candidate.thread_source.clone(),
+            updated_at: candidate.updated_at.clone(),
+            matched_preview,
+        });
+    }
 
     Ok(ThreadQueryResult {
         query: query.clone(),
@@ -270,6 +297,9 @@ pub fn render_thread_query_head_markdown(result: &ThreadQueryResult) -> String {
     push_yaml_string(&mut output, "provider", &result.query.provider.to_string());
     push_yaml_string(&mut output, "mode", "thread_query");
     push_yaml_string(&mut output, "limit", &result.query.limit.to_string());
+    if let Some(role) = &result.query.role {
+        push_yaml_string(&mut output, "role", role);
+    }
 
     if let Some(q) = &result.query.q {
         push_yaml_string(&mut output, "q", q);
@@ -302,6 +332,11 @@ pub fn render_thread_query_markdown(result: &ThreadQueryResult) -> String {
     output.push('\n');
     output.push_str("# Threads\n\n");
     output.push_str(&format!("- Provider: `{}`\n", result.query.provider));
+    if let Some(role) = &result.query.role {
+        output.push_str(&format!("- Role: `{}`\n", role));
+    } else {
+        output.push_str("- Role: `_none_`\n");
+    }
     output.push_str(&format!("- Limit: `{}`\n", result.query.limit));
     if let Some(q) = &result.query.q {
         output.push_str(&format!("- Query: `{}`\n", q));
@@ -331,31 +366,11 @@ pub fn render_thread_query_markdown(result: &ThreadQueryResult) -> String {
     output
 }
 
-fn collect_keyword_matched_items(
-    candidates: &[QueryCandidate],
-    keyword: &str,
-    limit: usize,
-) -> Result<Vec<ThreadQueryItem>> {
-    let mut items = Vec::new();
-    for candidate in candidates {
-        if items.len() >= limit {
-            break;
-        }
-        let matched_preview = match &candidate.search_target {
-            QuerySearchTarget::File(path) => match_first_preview_in_file(path, keyword)?,
-            QuerySearchTarget::Text(text) => match_first_preview_in_text(text, keyword),
-        };
-        if let Some(matched_preview) = matched_preview {
-            items.push(ThreadQueryItem {
-                thread_id: candidate.thread_id.clone(),
-                uri: candidate.uri.clone(),
-                thread_source: candidate.thread_source.clone(),
-                updated_at: candidate.updated_at.clone(),
-                matched_preview: Some(matched_preview),
-            });
-        }
+fn match_candidate_preview(candidate: &QueryCandidate, keyword: &str) -> Result<Option<String>> {
+    match &candidate.search_target {
+        QuerySearchTarget::File(path) => match_first_preview_in_file(path, keyword),
+        QuerySearchTarget::Text(text) => Ok(match_first_preview_in_text(text, keyword)),
     }
-    Ok(items)
 }
 
 fn match_first_preview_in_file(path: &Path, keyword: &str) -> Result<Option<String>> {

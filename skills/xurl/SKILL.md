@@ -10,6 +10,7 @@ description: Use xurl to read, discover, and write AI agent conversations throug
 - User gives `skills://...` URI.
 - User names a skill and asks to load or learn it.
 - User asks to list/search provider threads.
+- User asks to query role-scoped threads like `agents://codex/reviewer`.
 - User asks to read or summarize a conversation.
 - User asks to read local or GitHub-hosted skill content.
 - User task requires capability not covered by current loaded context.
@@ -94,6 +95,14 @@ xurl 'agents://codex?q=spawn_agent'
 xurl 'agents://claude?q=agent&limit=5'
 ```
 
+Role-scoped query (session-first, role-fallback):
+
+```bash
+xurl agents://codex/reviewer
+# equivalent shorthand:
+xurl codex/reviewer
+```
+
 ### 2) Read
 
 ```bash
@@ -137,6 +146,12 @@ Create with query parameters:
 
 ```bash
 xurl "agents://codex?cd=%2FUsers%2Falice%2Frepo&add-dir=%2FUsers%2Falice%2Fshared&model=gpt-5" -d "Review this patch"
+```
+
+Create with role URI:
+
+```bash
+xurl agents://codex/reviewer -d "Review this patch"
 ```
 
 Payload from file/stdin:
@@ -221,7 +236,7 @@ Guardrails:
 URI Anatomy (ASCII):
 
 ```text
-[agents://]<provider>[/<conversation_id>[/<child_id>]][?<query>]
+[agents://]<provider>[/<token>[/<child_id>]][?<query>]
 |------|  |--------|  |---------------------------|  |------|
  optional   provider         optional path parts        query
  scheme
@@ -231,17 +246,32 @@ Component meanings:
 
 - `scheme`: optional `agents://` prefix; omitted form is treated as shorthand
 - `provider`: provider name
-- `conversation_id`: main conversation id
+- `token`: main conversation id or role name
 - `child_id`: child/subagent id
 - `query`: optional key-value parameters
+
+Token resolution (`agents://<provider>/<token>`):
+
+1. Parse `<token>` as session id first.
+2. If session-id parsing fails, treat `<token>` as role.
 
 Common URI patterns:
 
 - `agents://<provider>`: discover recent conversations
 - `agents://<provider>/<conversation_id>`: read main conversation
+- `agents://<provider>/<role>`: role-scoped thread query or role-based create with `-d`
 - `agents://<provider>/<conversation_id>/<child_id>`: read child/subagent conversation
 - `agents://<provider>?k=v` with `-d`: create
 - `agents://<provider>/<conversation_id>` with `-d`: append
+
+Role create behavior by provider:
+
+- `codex`: supported (`[agents.<role>]` in `~/.codex/config.toml` mapped to `--config`)
+- `claude`: supported (`--agent <role>`)
+- `opencode`: supported (`--agent <role>`)
+- `amp`: returns clear error (non-interactive role create unsupported)
+- `gemini`: returns clear error (non-interactive role create unsupported)
+- `pi`: returns clear error (role create unsupported)
 
 Skills URI patterns:
 

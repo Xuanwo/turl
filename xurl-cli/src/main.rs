@@ -5,7 +5,9 @@ use std::{fs, io};
 use std::io::{Read, Write};
 
 use clap::Parser;
-use xurl_core::uri::{is_uuid_session_id, parse_collection_query_uri};
+use xurl_core::uri::{
+    is_uuid_session_id, parse_collection_query_uri, parse_role_query_uri, parse_role_uri,
+};
 use xurl_core::{
     AgentsUri, ProviderKind, ProviderRoots, SkillsUri, WriteEventSink, WriteOptions, WriteRequest,
     WriteResult, XurlError, query_threads, render_skill_head_markdown, render_skill_markdown,
@@ -73,6 +75,16 @@ fn run(cli: Cli) -> xurl_core::Result<()> {
         }
 
         if let Some(query) = parse_collection_query_uri(&uri)? {
+            let result = query_threads(&query, &roots)?;
+            let output_body = if head {
+                render_thread_query_head_markdown(&result)
+            } else {
+                render_thread_query_markdown(&result)
+            };
+            return write_output(output, &output_body);
+        }
+
+        if let Some(query) = parse_role_query_uri(&uri)? {
             let result = query_threads(&query, &roots)?;
             let output_body = if head {
                 render_thread_query_head_markdown(&result)
@@ -171,6 +183,17 @@ struct WriteTarget {
 }
 
 fn parse_write_target(input: &str) -> xurl_core::Result<WriteTarget> {
+    if let Some(role_uri) = parse_role_uri(input)? {
+        let (options, warnings) = build_write_options(role_uri.query, Some(role_uri.role));
+        return Ok(WriteTarget {
+            provider: role_uri.provider,
+            session_id: None,
+            action: WriteAction::Create,
+            options,
+            warnings,
+        });
+    }
+
     let uri = AgentsUri::parse(input)?;
     if uri.agent_id.is_some() {
         return Err(XurlError::InvalidMode(
@@ -183,7 +206,7 @@ fn parse_write_target(input: &str) -> xurl_core::Result<WriteTarget> {
     } else {
         WriteAction::Append
     };
-    let (options, warnings) = build_write_options(&uri);
+    let (options, warnings) = build_write_options(uri.query, None);
 
     let session_id = if uri.session_id.is_empty() {
         None
@@ -200,13 +223,11 @@ fn parse_write_target(input: &str) -> xurl_core::Result<WriteTarget> {
     })
 }
 
-fn build_write_options(uri: &AgentsUri) -> (WriteOptions, Vec<String>) {
-    (
-        WriteOptions {
-            params: uri.query.clone(),
-        },
-        Vec::new(),
-    )
+fn build_write_options(
+    params: Vec<(String, Option<String>)>,
+    role: Option<String>,
+) -> (WriteOptions, Vec<String>) {
+    (WriteOptions { params, role }, Vec::new())
 }
 
 fn build_prompt(data: &[String]) -> xurl_core::Result<String> {

@@ -12,7 +12,9 @@ use walkdir::WalkDir;
 use crate::error::{Result, XurlError};
 use crate::jsonl;
 use crate::model::{ProviderKind, ResolutionMeta, ResolvedThread, WriteRequest, WriteResult};
-use crate::provider::{Provider, WriteEventSink, append_passthrough_args};
+use crate::provider::{
+    Provider, WriteEventSink, append_passthrough_args, append_passthrough_args_excluding,
+};
 
 #[derive(Debug, Deserialize)]
 struct SessionsIndex {
@@ -363,14 +365,26 @@ impl Provider for ClaudeProvider {
     }
 
     fn write(&self, req: &WriteRequest, sink: &mut dyn WriteEventSink) -> Result<WriteResult> {
-        let warnings = Vec::new();
+        let mut warnings = Vec::new();
         let mut args = vec![
             "-p".to_string(),
             "--verbose".to_string(),
             "--output-format".to_string(),
             "stream-json".to_string(),
         ];
-        append_passthrough_args(&mut args, &req.options.params);
+        if let Some(role) = req.options.role.as_deref() {
+            args.push("--agent".to_string());
+            args.push(role.to_string());
+            let ignored =
+                append_passthrough_args_excluding(&mut args, &req.options.params, &["agent"]);
+            if !ignored.is_empty() {
+                warnings.push(
+                    "ignored query parameter `agent` because URI role is already set".to_string(),
+                );
+            }
+        } else {
+            append_passthrough_args(&mut args, &req.options.params);
+        }
         if let Some(session_id) = req.session_id.as_deref() {
             args.push("--resume".to_string());
             args.push(session_id.to_string());

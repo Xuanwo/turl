@@ -1,4 +1,5 @@
 use std::cmp::Reverse;
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -7,6 +8,8 @@ use std::time::SystemTime;
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde_json::Value;
+use toml::Table as TomlTable;
+use toml::Value as TomlValue;
 use walkdir::WalkDir;
 
 use crate::error::{Result, XurlError};
@@ -155,6 +158,101 @@ impl CodexProvider {
 
     fn codex_bin() -> String {
         std::env::var("XURL_CODEX_BIN").unwrap_or_else(|_| "codex".to_string())
+    }
+
+    fn config_path(&self) -> PathBuf {
+        self.root.join("config.toml")
+    }
+
+    fn load_role_overrides(&self, role: &str) -> Result<Vec<(String, String)>> {
+        let config_path = self.config_path();
+        let raw = fs::read_to_string(&config_path).map_err(|source| XurlError::Io {
+            path: config_path.clone(),
+            source,
+        })?;
+        let config = toml::from_str::<TomlTable>(&raw).map_err(|err| {
+            XurlError::InvalidMode(format!(
+                "failed parsing codex config {}: {err}",
+                config_path.display()
+            ))
+        })?;
+        let role_config = config
+            .get("agents")
+            .and_then(TomlValue::as_table)
+            .and_then(|agents| agents.get(role))
+            .and_then(TomlValue::as_table)
+            .ok_or_else(|| {
+                XurlError::InvalidMode(format!(
+                    "codex role `{role}` is not defined in {}",
+                    config_path.display()
+                ))
+            })?;
+
+        let mut merged = BTreeMap::<String, String>::new();
+        if let Some(config_file) = role_config.get("config_file").and_then(TomlValue::as_str) {
+            let config_file_path = if Path::new(config_file).is_absolute() {
+                PathBuf::from(config_file)
+            } else {
+                self.root.join(config_file)
+            };
+            let raw = fs::read_to_string(&config_file_path).map_err(|source| XurlError::Io {
+                path: config_file_path.clone(),
+                source,
+            })?;
+            let config = toml::from_str::<TomlTable>(&raw).map_err(|err| {
+                XurlError::InvalidMode(format!(
+                    "failed parsing codex role config {}: {err}",
+                    config_file_path.display()
+                ))
+            })?;
+            for (key, value) in config {
+                Self::flatten_codex_config(&key, &value, &mut merged);
+            }
+        }
+
+        for (key, value) in role_config {
+            if key == "description" || key == "config_file" {
+                continue;
+            }
+            Self::flatten_codex_config(key, value, &mut merged);
+        }
+
+        if merged.is_empty() {
+            return Err(XurlError::InvalidMode(format!(
+                "codex role `{role}` does not define writable config overrides"
+            )));
+        }
+
+        Ok(merged.into_iter().collect())
+    }
+
+    fn flatten_codex_config(
+        prefix: &str,
+        value: &TomlValue,
+        output: &mut BTreeMap<String, String>,
+    ) {
+        if let TomlValue::Table(table) = value {
+            for (key, child) in table {
+                let next_prefix = format!("{prefix}.{key}");
+                Self::flatten_codex_config(&next_prefix, child, output);
+            }
+            return;
+        }
+
+        output.insert(prefix.to_string(), Self::encode_codex_config_value(value));
+    }
+
+    fn encode_codex_config_value(value: &TomlValue) -> String {
+        match value {
+            TomlValue::String(text) => text.clone(),
+            TomlValue::Integer(number) => number.to_string(),
+            TomlValue::Float(number) => number.to_string(),
+            TomlValue::Boolean(flag) => flag.to_string(),
+            TomlValue::Datetime(datetime) => datetime.to_string(),
+            TomlValue::Array(_) | TomlValue::Table(_) => {
+                serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
+            }
+        }
     }
 
     fn spawn_codex_command(args: &[String]) -> Result<std::process::Child> {
@@ -375,6 +473,11 @@ impl Provider for CodexProvider {
 
     fn write(&self, req: &WriteRequest, sink: &mut dyn WriteEventSink) -> Result<WriteResult> {
         let warnings = Vec::new();
+        let role_overrides = if let Some(role) = req.options.role.as_deref() {
+            self.load_role_overrides(role)?
+        } else {
+            Vec::new()
+        };
         let mut args = Vec::new();
         args.push("exec".to_string());
 
@@ -382,12 +485,20 @@ impl Provider for CodexProvider {
             args.push("resume".to_string());
             args.push("--json".to_string());
             append_passthrough_args(&mut args, &req.options.params);
+            for (key, value) in &role_overrides {
+                args.push("--config".to_string());
+                args.push(format!("{key}={value}"));
+            }
             args.push(session_id.to_string());
             args.push(req.prompt.clone());
             self.run_write(&args, req, sink, warnings)
         } else {
             args.push("--json".to_string());
             append_passthrough_args(&mut args, &req.options.params);
+            for (key, value) in &role_overrides {
+                args.push("--config".to_string());
+                args.push(format!("{key}={value}"));
+            }
             args.push(req.prompt.clone());
             self.run_write(&args, req, sink, warnings)
         }
@@ -543,5 +654,66 @@ mod tests {
         assert_eq!(resolved.metadata.source, "codex:sessions");
         assert_eq!(resolved.metadata.warnings.len(), 1);
         assert!(resolved.metadata.warnings[0].contains("missing rollout"));
+    }
+
+    #[test]
+    fn loads_role_overrides_from_main_and_config_file() {
+        let temp = tempdir().expect("tempdir");
+        fs::write(
+            temp.path().join("config.toml"),
+            r#"
+[agents.reviewer]
+description = "review role"
+config_file = "agents/reviewer.toml"
+model_reasoning_effort = "high"
+developer_instructions = "Focus on high priority issues."
+"#,
+        )
+        .expect("write config");
+        let role_config_dir = temp.path().join("agents");
+        fs::create_dir_all(&role_config_dir).expect("mkdir role config");
+        fs::write(
+            role_config_dir.join("reviewer.toml"),
+            r#"
+model = "gpt-5.3-codex"
+"#,
+        )
+        .expect("write role config");
+
+        let provider = CodexProvider::new(temp.path());
+        let overrides = provider
+            .load_role_overrides("reviewer")
+            .expect("must load role");
+
+        assert_eq!(
+            overrides,
+            vec![
+                (
+                    "developer_instructions".to_string(),
+                    "Focus on high priority issues.".to_string(),
+                ),
+                ("model".to_string(), "gpt-5.3-codex".to_string()),
+                ("model_reasoning_effort".to_string(), "high".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn missing_role_override_returns_error() {
+        let temp = tempdir().expect("tempdir");
+        fs::write(
+            temp.path().join("config.toml"),
+            r#"
+[agents.default]
+description = "default role"
+"#,
+        )
+        .expect("write config");
+
+        let provider = CodexProvider::new(temp.path());
+        let err = provider
+            .load_role_overrides("reviewer")
+            .expect_err("must fail");
+        assert!(format!("{err}").contains("is not defined"));
     }
 }
